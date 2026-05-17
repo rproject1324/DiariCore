@@ -779,6 +779,34 @@ document.addEventListener('DOMContentLoaded', async function () {
         return navigator.onLine === false;
     }
 
+    /** Load offline module if missing (stale PWA shell or script failed on first paint). */
+    async function ensureDiariOfflineLoaded() {
+        if (window.DiariOffline && typeof window.DiariOffline.saveEntryLocally === 'function') {
+            return true;
+        }
+        const existing = document.querySelector('script[src*="diari-offline"]');
+        if (existing) {
+            await new Promise((resolve) => {
+                if (window.DiariOffline) {
+                    resolve();
+                    return;
+                }
+                existing.addEventListener('load', () => resolve(), { once: true });
+                existing.addEventListener('error', () => resolve(), { once: true });
+                setTimeout(resolve, 800);
+            });
+            if (window.DiariOffline) return true;
+        }
+        return new Promise((resolve) => {
+            const s = document.createElement('script');
+            s.src = '/diari-offline.js';
+            s.async = false;
+            s.onload = () => resolve(Boolean(window.DiariOffline));
+            s.onerror = () => resolve(false);
+            document.head.appendChild(s);
+        });
+    }
+
     function readJsonStorage(key, fallbackValue) {
         try {
             const raw = localStorage.getItem(key);
@@ -1999,6 +2027,12 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         if (saveOffline) {
             try {
+                const offlineReady = await ensureDiariOfflineLoaded();
+                if (!offlineReady) {
+                    throw new Error(
+                        'Offline save could not load. Close the app, open on Wi‑Fi once (wait for “Update”), then try offline again.'
+                    );
+                }
                 try {
                     await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
                 } catch (_) {
@@ -2098,6 +2132,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 }
             } else {
             try {
+                await ensureDiariOfflineLoaded();
                 if (!window.DiariMoodAnalysis.showAnalysisLoading) {
                     window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
                 }

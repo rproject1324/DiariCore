@@ -7,6 +7,10 @@
 
     const HF_MODEL_ID = 'sseia/diari-core-mood';
     const ML_CACHE = 'diaricore-ml-v2';
+    const MODEL_IDB_NAME = 'diariCoreOfflineML';
+    const MODEL_IDB_VERSION = 1;
+    const MODEL_IDB_STORE = 'onnx';
+    const MODEL_IDB_KEY = 'model.onnx';
 
     /** Same-origin proxy (app.py) — reliable download + progress on mobile PWA. */
     function modelUrl() {
@@ -73,14 +77,103 @@
         return [];
     }
 
-    async function isModelCached() {
+    function openModelIdb() {
+        return new Promise((resolve, reject) => {
+            if (typeof indexedDB === 'undefined') {
+                reject(new Error('IndexedDB unavailable'));
+                return;
+            }
+            const req = indexedDB.open(MODEL_IDB_NAME, MODEL_IDB_VERSION);
+            req.onupgradeneeded = () => {
+                if (!req.result.objectStoreNames.contains(MODEL_IDB_STORE)) {
+                    req.result.createObjectStore(MODEL_IDB_STORE);
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+        });
+    }
+
+    async function readModelFromIdb() {
+        try {
+            const db = await openModelIdb();
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(MODEL_IDB_STORE, 'readonly');
+                const req = tx.objectStore(MODEL_IDB_STORE).get(MODEL_IDB_KEY);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => reject(req.error || new Error('IndexedDB read failed'));
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    async function writeModelToIdb(buf) {
+        const db = await openModelIdb();
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(MODEL_IDB_STORE, 'readwrite');
+            tx.objectStore(MODEL_IDB_STORE).put(buf, MODEL_IDB_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
+        });
+    }
+
+    async function readCachedModelSize() {
+        let size = 0;
         try {
             const cache = await caches.open(ML_CACHE);
             const hit = await cache.match(modelUrl());
-            return Boolean(hit);
+            if (hit) {
+                const blob = await hit.blob();
+                size = Math.max(size, blob.size || 0);
+            }
         } catch {
-            return false;
+            /* ignore */
         }
+        try {
+            const idbBuf = await readModelFromIdb();
+            if (idbBuf && idbBuf.byteLength) {
+                size = Math.max(size, idbBuf.byteLength);
+            }
+        } catch {
+            /* ignore */
+        }
+        return size;
+    }
+
+    async function isModelCached() {
+        const size = await readCachedModelSize();
+        return size >= MODEL_MIN_BYTES;
+    }
+
+    async function persistModelBuffer(buf, cacheKeyUrl) {
+        let savedBytes = 0;
+        try {
+            const cache = await caches.open(ML_CACHE);
+            await cache.put(cacheKeyUrl, new Response(buf.slice(0)));
+            const hit = await cache.match(cacheKeyUrl);
+            if (hit) {
+                const blob = await hit.blob();
+                savedBytes = blob.size || 0;
+            }
+        } catch (cacheErr) {
+            console.warn('[DiariEmotionOnnx] Cache API save failed:', cacheErr);
+        }
+        if (savedBytes < MODEL_MIN_BYTES) {
+            try {
+                await writeModelToIdb(buf);
+                const idbBuf = await readModelFromIdb();
+                savedBytes = idbBuf && idbBuf.byteLength ? idbBuf.byteLength : 0;
+            } catch (idbErr) {
+                console.warn('[DiariEmotionOnnx] IndexedDB save failed:', idbErr);
+            }
+        }
+        if (savedBytes < MODEL_MIN_BYTES) {
+            throw new Error(
+                'Could not save the model on this device (~1.1 GB). Check free space, then tap Download on Profile over Wi‑Fi.'
+            );
+        }
+        return savedBytes;
     }
 
     function formatLoadedForDisplay(loadedBytes) {
@@ -173,13 +266,13 @@
                     );
                     return;
                 }
+                let size = buf.byteLength;
                 try {
-                    const cache = await caches.open(ML_CACHE);
-                    await cache.put(cacheKeyUrl, new Response(buf));
-                } catch (cacheErr) {
-                    console.warn('[DiariEmotionOnnx] Cache write failed:', cacheErr);
+                    size = await persistModelBuffer(buf, cacheKeyUrl);
+                } catch (persistErr) {
+                    reject(persistErr);
+                    return;
                 }
-                const size = buf.byteLength;
                 setDownloadProgress({
                     phase: 'ready',
                     loaded: size,
@@ -196,48 +289,51 @@
         });
     }
 
-    async function readCachedModelSize() {
-        try {
-            const cache = await caches.open(ML_CACHE);
-            const hit = await cache.match(modelUrl());
-            if (!hit) return 0;
-            const blob = await hit.blob();
-            return blob.size || 0;
-        } catch {
-            return 0;
-        }
-    }
-
     async function fetchModelBuffer() {
-        const cache = await caches.open(ML_CACHE);
         const url = modelUrl();
-        let res = await cache.match(url);
-
-        if (res) {
-            const blob = await res.blob();
-            const size = blob.size || 0;
-            if (size < MODEL_MIN_BYTES) {
-                await cache.delete(url);
-                setDownloadProgress({
-                    phase: 'error',
-                    loaded: size,
-                    total: MODEL_BYTES_HINT,
-                    percent: 0,
-                    message:
-                        'Cached file incomplete (' +
-                        formatLoadedForDisplay(size) +
-                        '). Tap Download on Profile (Wi‑Fi).',
-                });
-                throw new Error('Cached model file is too small');
-            }
+        const cachedSize = await readCachedModelSize();
+        if (cachedSize >= MODEL_MIN_BYTES) {
             setDownloadProgress({
                 phase: 'ready',
-                loaded: size,
-                total: size,
+                loaded: cachedSize,
+                total: cachedSize,
                 percent: 100,
                 message: 'Offline emotion model ready',
             });
-            return blob.arrayBuffer();
+            try {
+                const cache = await caches.open(ML_CACHE);
+                const res = await cache.match(url);
+                if (res) {
+                    const blob = await res.blob();
+                    if ((blob.size || 0) >= MODEL_MIN_BYTES) {
+                        return blob.arrayBuffer();
+                    }
+                }
+            } catch {
+                /* fall through to IndexedDB */
+            }
+            const idbBuf = await readModelFromIdb();
+            if (idbBuf && idbBuf.byteLength >= MODEL_MIN_BYTES) {
+                return idbBuf;
+            }
+        } else if (cachedSize > 0) {
+            try {
+                const cache = await caches.open(ML_CACHE);
+                await cache.delete(url);
+            } catch {
+                /* ignore */
+            }
+            setDownloadProgress({
+                phase: 'error',
+                loaded: cachedSize,
+                total: MODEL_BYTES_HINT,
+                percent: 0,
+                message:
+                    'Cached file incomplete (' +
+                    formatLoadedForDisplay(cachedSize) +
+                    '). Tap Download on Profile (Wi‑Fi).',
+            });
+            throw new Error('Cached model file is too small');
         }
 
         if (!isOnline()) {

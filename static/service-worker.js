@@ -2,7 +2,17 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v12';
+const CACHE_NAME = 'diaricore-pwa-v13';
+const ML_CACHE_PREFIX = 'diaricore-ml-';
+const PWA_CACHE_PREFIX = 'diaricore-pwa-';
+
+/** Never delete ONNX model caches on SW update — only old app-shell caches. */
+function shouldDeleteCacheOnActivate(name) {
+    if (name.startsWith(ML_CACHE_PREFIX)) return false;
+    if (name === CACHE_NAME) return false;
+    if (name.startsWith(PWA_CACHE_PREFIX)) return true;
+    return false;
+}
 
 const PRECACHE_URLS = [
     '/login.html',
@@ -37,6 +47,7 @@ const PRECACHE_URLS = [
     '/diari-pwa-offline-model-status.js',
     '/diari-security.js',
     '/diari-shell.js',
+    '/lottie-web.min.js',
     '/mood-scoring.js',
     '/side-bar.js',
 ];
@@ -74,7 +85,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((keys) =>
-            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+            Promise.all(keys.filter(shouldDeleteCacheOnActivate).map((k) => caches.delete(k)))
         )
     );
     self.clients.claim();

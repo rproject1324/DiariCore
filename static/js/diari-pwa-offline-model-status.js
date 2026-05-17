@@ -126,7 +126,11 @@
             }
             if (sizeEl) {
                 if (phase === 'ready') {
-                    sizeEl.textContent = totalLabel() + ' cached';
+                    const saved =
+                        loaded >= 1024 * 1024 * 1024 * 0.9
+                            ? formatLoaded(loaded)
+                            : totalLabel();
+                    sizeEl.textContent = saved + ' saved on device';
                 } else {
                     sizeEl.textContent = formatLiveSize(loaded, total);
                 }
@@ -209,7 +213,11 @@
             if (window.DiariEmotionOnnx?.refreshCachedReadyState) {
                 await window.DiariEmotionOnnx.refreshCachedReadyState();
             }
+            const cached =
+                window.DiariEmotionOnnx?.isModelCached &&
+                (await window.DiariEmotionOnnx.isModelCached());
             refresh();
+            if (cached) return;
             const st = window.DiariEmotionOnnx?.getDownloadStatus?.();
             if (
                 navigator.onLine !== false &&
