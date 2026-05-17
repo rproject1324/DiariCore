@@ -45,6 +45,29 @@
         return global.navigator.onLine !== false;
     }
 
+    /** Phones cannot load ~1.1 GB into a browser tab without crashing (Aw, Snap / OOM). */
+    function isMobilePhone() {
+        const ua = global.navigator.userAgent || '';
+        if (/iPhone|iPod|Mobile/i.test(ua) && !/iPad/i.test(ua)) return true;
+        if (/Android/i.test(ua) && !/Tablet/i.test(ua)) return true;
+        return (
+            global.navigator.maxTouchPoints > 1 &&
+            global.innerWidth > 0 &&
+            global.innerWidth < 900
+        );
+    }
+
+    function canUseHeavyOnnx() {
+        if (!isMobilePhone()) return true;
+        const mem = global.navigator.deviceMemory;
+        return typeof mem === 'number' && mem >= 8;
+    }
+
+    function getDeviceOnnxMessage() {
+        if (canUseHeavyOnnx()) return '';
+        return 'This phone cannot run the 1.11 GB model in the browser (it would crash). Offline saves use a local estimate; full AI analysis runs when you sync online.';
+    }
+
     function setDownloadProgress(patch) {
         const next = { ...downloadProgress, ...patch };
         if (next.total > 0 && next.phase !== 'ready' && next.phase !== 'error') {
@@ -501,6 +524,7 @@
      * tokenizer/CDN were cached during a prior online prepare).
      */
     async function ensurePreparedForInference() {
+        if (!canUseHeavyOnnx()) return false;
         if (ready) return true;
         const cached = await isModelCached();
         if (!cached) return false;
@@ -527,6 +551,9 @@
     }
 
     async function prepare() {
+        if (!canUseHeavyOnnx()) {
+            throw new Error(getDeviceOnnxMessage());
+        }
         if (ready) {
             await refreshCachedReadyState();
             return true;
@@ -639,7 +666,7 @@
 
     /** Warm tokenizer + worker when model is on device (online or offline). */
     function prepareInBackground() {
-        if (ready || preparing) return;
+        if (!canUseHeavyOnnx() || ready || preparing) return;
         void (async () => {
             try {
                 const cached = await isModelCached();
@@ -658,6 +685,9 @@
         prepare,
         ensurePreparedForInference,
         analyze,
+        canUseHeavyOnnx,
+        isMobilePhone,
+        getDeviceOnnxMessage,
         isReady: () => ready,
         isPreparing: () => Boolean(preparing),
         isModelCached,

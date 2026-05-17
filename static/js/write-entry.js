@@ -837,16 +837,28 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     async function analyzeForSaveOffline(text) {
         const onnx = window.DiariEmotionOnnx;
-        if (onnx) {
+        const heavyOk = onnx?.canUseHeavyOnnx ? onnx.canUseHeavyOnnx() : false;
+        if (onnx && heavyOk && onnx.isReady?.()) {
+            try {
+                const result = await onnx.analyze(text);
+                if (result?.emotionLabel) {
+                    return {
+                        ...result,
+                        feeling: result.feeling || result.emotionLabel,
+                        moodScoringOffline: false,
+                        engine: 'offline-onnx',
+                    };
+                }
+            } catch (e) {
+                console.warn('[WriteEntry] Offline ONNX analyze failed:', e);
+            }
+        }
+        if (heavyOk && onnx && !onnx.isReady?.()) {
             try {
                 const cached = await onnx.isModelCached();
-                if (cached) {
-                    if (!onnx.isReady?.()) {
-                        const ensure =
-                            onnx.ensurePreparedForInference || (() => onnx.prepare());
-                        await ensure.call(onnx);
-                    }
-                    if (onnx.isReady?.()) {
+                if (cached && onnx.ensurePreparedForInference) {
+                    const ok = await onnx.ensurePreparedForInference();
+                    if (ok && onnx.isReady?.()) {
                         const result = await onnx.analyze(text);
                         if (result?.emotionLabel) {
                             return {
@@ -859,17 +871,14 @@ document.addEventListener('DOMContentLoaded', async function () {
                     }
                 }
             } catch (e) {
-                console.warn('[WriteEntry] Offline ONNX analyze failed:', e);
+                console.warn('[WriteEntry] Offline ONNX prepare skipped:', e);
             }
         }
-        if (window.DiariOffline?.analyzeForOffline) {
-            try {
-                return await window.DiariOffline.analyzeForOffline(text);
-            } catch (_) {
-                /* heuristic */
-            }
+        const estimate = analyzeTextLocallyBuiltin(text);
+        if (!heavyOk) {
+            estimate.engine = 'offline-estimate';
         }
-        return analyzeTextLocallyBuiltin(text);
+        return estimate;
     }
 
     function readOfflineCreateQueueLs() {
@@ -2146,7 +2155,9 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (!skipAnalysisGate) {
                 await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
             }
+            const isOfflineEstimate = savedEntry.engine === 'offline-estimate';
             const offlineFallback =
+                isOfflineEstimate ||
                 savedEntry.engine === 'offline-local' ||
                 savedEntry.engine === 'fallback' ||
                 (savedEntry.moodScoringOffline === true && savedEntry.engine !== 'offline-onnx');
@@ -2154,7 +2165,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 analysisOverlay,
                 savedEntry,
                 offlineFallback,
-                moodOptsForEntry(savedEntry)
+                { ...moodOptsForEntry(savedEntry), offlineEstimate: isOfflineEstimate }
             );
             try {
                 localStorage.removeItem('diariCoreDraft');
@@ -2206,13 +2217,6 @@ document.addEventListener('DOMContentLoaded', async function () {
                     }
                     if (analysisOverlay && window.DiariMoodAnalysis.showAnalysisLoading) {
                         window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
-                        const hint = analysisOverlay.querySelector('.mood-analysis-loading__hint');
-                        if (hint && window.DiariEmotionOnnx) {
-                            const cached = await window.DiariEmotionOnnx.isModelCached();
-                            if (cached && !window.DiariEmotionOnnx.isReady?.()) {
-                                hint.textContent = 'Loading offline emotion model…';
-                            }
-                        }
                     }
                 }
                 await finishOfflineSaveFast();

@@ -342,6 +342,13 @@
      */
     async function analyzeForOffline(text) {
         if (global.DiariEmotionOnnx) {
+            const heavyOk =
+                typeof global.DiariEmotionOnnx.canUseHeavyOnnx === 'function'
+                    ? global.DiariEmotionOnnx.canUseHeavyOnnx()
+                    : true;
+            if (!heavyOk) {
+                return { ...analyzeTextLocally(text), engine: 'offline-estimate' };
+            }
             try {
                 const cached = await global.DiariEmotionOnnx.isModelCached();
                 if (cached) {

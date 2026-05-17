@@ -603,7 +603,13 @@
                         </section>
                     </div>
                 </div>
-                ${isFallback ? '<p class="mood-result-fallback-note">Saved with fallback analysis</p>' : ''}
+                ${
+                    opts.offlineEstimate
+                        ? '<p class="mood-result-fallback-note">Offline estimate on this device — full AI analysis when you sync online.</p>'
+                        : isFallback
+                          ? '<p class="mood-result-fallback-note">Saved with fallback analysis</p>'
+                          : ''
+                }
             </div>
         `;
 

@@ -54,7 +54,15 @@
 
         let pollTimer = null;
 
+        const phoneCannotRunOnnx =
+            window.DiariEmotionOnnx?.canUseHeavyOnnx &&
+            !window.DiariEmotionOnnx.canUseHeavyOnnx();
+
         function updateDownloadButton(detail) {
+            if (phoneCannotRunOnnx) {
+                downloadBtn.hidden = true;
+                return;
+            }
             if (!downloadBtn) return;
             const phase = detail?.phase || 'idle';
             const online = navigator.onLine !== false;
@@ -222,6 +230,20 @@
         }
 
         void (async () => {
+            if (phoneCannotRunOnnx) {
+                const msg =
+                    window.DiariEmotionOnnx?.getDeviceOnnxMessage?.() ||
+                    'On this phone, offline saves use a local estimate. Full AI analysis runs when you sync online.';
+                render({
+                    phase: 'unavailable',
+                    loaded: 0,
+                    total: window.DiariEmotionOnnx?.MODEL_BYTES_HINT || 0,
+                    percent: 0,
+                    message: msg,
+                });
+                if (titleEl) titleEl.textContent = 'Offline analysis on this device';
+                return;
+            }
             if (window.DiariEmotionOnnx?.refreshCachedReadyState) {
                 await window.DiariEmotionOnnx.refreshCachedReadyState();
             }
