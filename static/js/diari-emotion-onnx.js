@@ -18,6 +18,7 @@
     const MAX_LEN = 256;
     /** Hub file size hint when Content-Length is missing (~1.11 GB, same as HF Space). */
     const MODEL_BYTES_HINT = Math.round(1.11 * 1024 * 1024 * 1024);
+    const MODEL_TOTAL_LABEL = '1.11 GB';
 
     let ready = false;
     let preparing = null;
@@ -81,40 +82,106 @@
         }
     }
 
-    async function fetchModelResponse(cacheKeyUrl) {
-        const origin = global.location && global.location.origin ? global.location.origin : '';
-
-        try {
-            const resolveRes = await fetch(origin + '/offline-ml/resolve', {
-                credentials: 'same-origin',
-                cache: 'no-store',
-            });
-            if (resolveRes.ok) {
-                const data = await resolveRes.json().catch(() => ({}));
-                if (data && data.success && data.url) {
-                    const cdnRes = await fetch(data.url, {
-                        mode: 'cors',
-                        credentials: 'omit',
-                        cache: 'no-store',
-                    });
-                    if (cdnRes.ok) {
-                        return cdnRes;
-                    }
-                    console.warn(
-                        '[DiariEmotionOnnx] CDN fetch failed:',
-                        cdnRes.status,
-                        '— trying app proxy'
-                    );
-                }
-            }
-        } catch (resolveErr) {
-            console.warn('[DiariEmotionOnnx] resolve failed, trying proxy:', resolveErr);
+    function formatLoadedForDisplay(loadedBytes) {
+        const n = Math.max(0, Number(loadedBytes) || 0);
+        if (n >= 1024 * 1024 * 1024) {
+            return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
         }
+        if (n >= 1024 * 1024) {
+            return Math.round(n / (1024 * 1024)) + ' MB';
+        }
+        if (n >= 1024) {
+            return Math.round(n / 1024) + ' KB';
+        }
+        return '0 MB';
+    }
 
-        return fetch(cacheKeyUrl, {
+    function isDownloadActive() {
+        return Boolean(
+            downloadPromise ||
+                downloadProgress.phase === 'connecting' ||
+                downloadProgress.phase === 'downloading'
+        );
+    }
+
+    async function resolveModelDownloadUrl() {
+        const origin = global.location && global.location.origin ? global.location.origin : '';
+        setDownloadProgress({
+            phase: 'connecting',
+            loaded: 0,
+            total: MODEL_BYTES_HINT,
+            percent: 0,
+            message: 'Connecting to download server…',
+        });
+
+        const resolveRes = await fetch(origin + '/offline-ml/resolve', {
             credentials: 'same-origin',
             cache: 'no-store',
-            redirect: 'follow',
+        });
+        if (!resolveRes.ok) {
+            throw new Error('Resolve failed: ' + resolveRes.status);
+        }
+        const data = await resolveRes.json().catch(() => ({}));
+        if (!data || !data.success || !data.url) {
+            throw new Error(data?.error || 'Could not resolve model download URL');
+        }
+        return data.url;
+    }
+
+    /**
+     * XHR download — reports byte progress on mobile (fetch streams often stay at 0%).
+     */
+    function downloadUrlWithProgress(downloadUrl, cacheKeyUrl) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', downloadUrl, true);
+            xhr.responseType = 'arraybuffer';
+
+            xhr.onprogress = (ev) => {
+                const total = ev.lengthComputable && ev.total > 0 ? ev.total : MODEL_BYTES_HINT;
+                const loaded = ev.loaded || 0;
+                setDownloadProgress({
+                    phase: 'downloading',
+                    loaded,
+                    total,
+                    message:
+                        formatLoadedForDisplay(loaded) +
+                        ' / ' +
+                        MODEL_TOTAL_LABEL +
+                        ' — downloading…',
+                });
+            };
+
+            xhr.onload = async () => {
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    reject(new Error('Download failed: HTTP ' + xhr.status));
+                    return;
+                }
+                const buf = xhr.response;
+                if (!buf || !buf.byteLength) {
+                    reject(new Error('Download returned empty file'));
+                    return;
+                }
+                try {
+                    const cache = await caches.open(ML_CACHE);
+                    await cache.put(cacheKeyUrl, new Response(buf));
+                } catch (cacheErr) {
+                    console.warn('[DiariEmotionOnnx] Cache write failed:', cacheErr);
+                }
+                const size = buf.byteLength;
+                setDownloadProgress({
+                    phase: 'ready',
+                    loaded: size,
+                    total: size,
+                    percent: 100,
+                    message: 'Offline emotion model ready',
+                });
+                resolve(buf);
+            };
+
+            xhr.onerror = () => reject(new Error('Network error during model download'));
+            xhr.onabort = () => reject(new Error('Model download cancelled'));
+            xhr.send();
         });
     }
 
@@ -164,74 +231,25 @@
             loaded: 0,
             total: MODEL_BYTES_HINT,
             percent: 0,
-            message: 'Downloading offline emotion model…',
+            message: '0 MB / ' + MODEL_TOTAL_LABEL + ' — starting…',
         });
 
-        const response = await fetchModelResponse(url);
-        if (!response.ok) {
-            setDownloadProgress({
-                phase: 'error',
-                message: 'Model download failed (' + response.status + '). Use Wi‑Fi and tap Download again.',
-            });
-            throw new Error('Model download failed: ' + response.status);
+        try {
+            const cdnUrl = await resolveModelDownloadUrl();
+            return await downloadUrlWithProgress(cdnUrl, url);
+        } catch (resolveErr) {
+            console.warn('[DiariEmotionOnnx] CDN resolve failed, trying app URL:', resolveErr);
         }
 
-        const total =
-            Number(response.headers.get('content-length')) || MODEL_BYTES_HINT;
         setDownloadProgress({
             phase: 'downloading',
             loaded: 0,
-            total,
+            total: MODEL_BYTES_HINT,
             percent: 0,
-            message: 'Downloading offline emotion model…',
+            message: '0 MB / ' + MODEL_TOTAL_LABEL + ' — starting…',
         });
 
-        if (!response.body || typeof response.body.getReader !== 'function') {
-            const buf = await response.arrayBuffer();
-            await cache.put(url, new Response(buf));
-            setDownloadProgress({
-                phase: 'ready',
-                loaded: buf.byteLength,
-                total: buf.byteLength || total,
-                percent: 100,
-                message: 'Offline emotion model ready',
-            });
-            return buf;
-        }
-
-        const reader = response.body.getReader();
-        const chunks = [];
-        let loaded = 0;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            loaded += value.byteLength;
-            setDownloadProgress({
-                phase: 'downloading',
-                loaded,
-                total,
-                message: 'Downloading offline emotion model…',
-            });
-        }
-
-        const merged = new Uint8Array(loaded);
-        let offset = 0;
-        for (const chunk of chunks) {
-            merged.set(chunk, offset);
-            offset += chunk.byteLength;
-        }
-
-        await cache.put(url, new Response(merged.buffer));
-        setDownloadProgress({
-            phase: 'ready',
-            loaded,
-            total: loaded || total,
-            percent: 100,
-            message: 'Offline emotion model ready',
-        });
-        return merged.buffer;
+        return downloadUrlWithProgress(url, url);
     }
 
     function createWorker() {
@@ -337,13 +355,16 @@
                 percent: 0,
                 message: 'Connect online once to download the offline model',
             });
+        } else if (isDownloadActive()) {
+            /* Do not reset progress while a download is running */
+            return;
         } else if (!preparing) {
             setDownloadProgress({
                 phase: 'idle',
                 loaded: 0,
                 total: MODEL_BYTES_HINT,
                 percent: 0,
-                message: 'Offline model will download in the background',
+                message: 'Tap Download to save ' + MODEL_TOTAL_LABEL + ' for offline use',
             });
         }
     }
@@ -486,6 +507,9 @@
             return modelUrl();
         },
         MODEL_BYTES_HINT,
+        MODEL_TOTAL_LABEL,
+        formatLoadedForDisplay,
+        isDownloadActive,
     };
 
     void refreshCachedReadyState();

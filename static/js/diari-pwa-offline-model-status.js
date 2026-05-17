@@ -16,18 +16,24 @@
         );
     }
 
-    function formatSize(bytes) {
-        const n = Math.max(0, Number(bytes) || 0);
-        if (n >= 1024 * 1024 * 1024) {
-            return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    function totalLabel() {
+        return window.DiariEmotionOnnx?.MODEL_TOTAL_LABEL || '1.11 GB';
+    }
+
+    function formatLoaded(loadedBytes) {
+        if (window.DiariEmotionOnnx?.formatLoadedForDisplay) {
+            return window.DiariEmotionOnnx.formatLoadedForDisplay(loadedBytes);
         }
+        const n = Math.max(0, Number(loadedBytes) || 0);
         if (n >= 1024 * 1024) {
             return Math.round(n / (1024 * 1024)) + ' MB';
         }
-        if (n >= 1024) {
-            return Math.round(n / 1024) + ' KB';
-        }
-        return n + ' B';
+        return '0 MB';
+    }
+
+    /** Always "59 MB / 1.11 GB" style (never "Up to 1.11 GB"). */
+    function formatLiveSize(loadedBytes, totalBytes) {
+        return formatLoaded(loadedBytes) + ' / ' + totalLabel();
     }
 
     function bindProfileOfflineModelStatus() {
@@ -52,14 +58,22 @@
             if (!downloadBtn) return;
             const phase = detail?.phase || 'idle';
             const online = navigator.onLine !== false;
-            const show =
-                online &&
-                phase !== 'ready' &&
-                phase !== 'downloading' &&
-                phase !== 'tokenizer' &&
-                phase !== 'initializing';
+            const active =
+                phase === 'connecting' ||
+                phase === 'downloading' ||
+                phase === 'tokenizer' ||
+                phase === 'initializing' ||
+                (window.DiariEmotionOnnx?.isDownloadActive && window.DiariEmotionOnnx.isDownloadActive());
+            if (active && online) {
+                downloadBtn.hidden = false;
+                downloadBtn.disabled = true;
+                downloadBtn.textContent = 'Downloading…';
+                return;
+            }
+            const show = online && phase !== 'ready';
             downloadBtn.hidden = !show;
             downloadBtn.disabled = false;
+            downloadBtn.textContent = 'Download for offline use';
         }
 
         function render(detail) {
@@ -74,12 +88,17 @@
             root.classList.toggle('is-error', phase === 'error' || phase === 'unavailable');
             root.classList.toggle(
                 'is-active',
-                phase === 'downloading' || phase === 'tokenizer' || phase === 'initializing'
+                phase === 'connecting' ||
+                    phase === 'downloading' ||
+                    phase === 'tokenizer' ||
+                    phase === 'initializing'
             );
 
             if (titleEl) {
                 if (phase === 'ready') {
                     titleEl.textContent = 'Offline emotion model';
+                } else if (phase === 'connecting') {
+                    titleEl.textContent = 'Starting download…';
                 } else if (phase === 'downloading') {
                     titleEl.textContent = 'Downloading offline model';
                 } else if (phase === 'tokenizer') {
@@ -103,17 +122,13 @@
                 barWrap.setAttribute('aria-valuenow', String(pctClamped));
             }
             if (pctEl) {
-                pctEl.textContent = phase === 'ready' ? '100%' : pct + '%';
+                pctEl.textContent = phase === 'ready' ? '100%' : pctClamped + '%';
             }
             if (sizeEl) {
                 if (phase === 'ready') {
-                    sizeEl.textContent = formatSize(total) + ' cached';
-                } else if (phase === 'downloading' || phase === 'tokenizer') {
-                    sizeEl.textContent = formatSize(loaded) + ' / ' + formatSize(total);
-                } else if (total > 0) {
-                    sizeEl.textContent = 'Up to ' + formatSize(total);
+                    sizeEl.textContent = totalLabel() + ' cached';
                 } else {
-                    sizeEl.textContent = '';
+                    sizeEl.textContent = formatLiveSize(loaded, total);
                 }
             }
             if (hintEl) {
@@ -122,9 +137,14 @@
 
             updateDownloadButton(detail);
 
-            if (phase === 'downloading' || phase === 'tokenizer' || phase === 'initializing') {
+            if (
+                phase === 'connecting' ||
+                phase === 'downloading' ||
+                phase === 'tokenizer' ||
+                phase === 'initializing'
+            ) {
                 if (!pollTimer) {
-                    pollTimer = window.setInterval(refresh, 400);
+                    pollTimer = window.setInterval(refresh, 250);
                 }
             } else if (pollTimer) {
                 window.clearInterval(pollTimer);
@@ -150,21 +170,27 @@
                 });
                 return;
             }
-            if (downloadBtn) {
-                downloadBtn.disabled = true;
-                downloadBtn.textContent = 'Downloading…';
-            }
+
+            render({
+                phase: 'connecting',
+                loaded: 0,
+                total: window.DiariEmotionOnnx?.MODEL_BYTES_HINT || 0,
+                percent: 0,
+                message: '0 MB / ' + totalLabel() + ' — connecting…',
+            });
+
             try {
                 await window.DiariEmotionOnnx.startModelDownload();
-                if (window.DiariEmotionOnnx.prepare) {
-                    await window.DiariEmotionOnnx.prepare();
-                }
             } catch (e) {
                 console.warn('[PWA] Model download:', e);
+                render({
+                    phase: 'error',
+                    loaded: 0,
+                    total: window.DiariEmotionOnnx?.MODEL_BYTES_HINT || 0,
+                    percent: 0,
+                    message: (e && e.message) || 'Download failed. Tap Download to retry on Wi‑Fi.',
+                });
             } finally {
-                if (downloadBtn) {
-                    downloadBtn.textContent = 'Download for offline use';
-                }
                 refresh();
             }
         }
@@ -189,9 +215,8 @@
                 navigator.onLine !== false &&
                 st &&
                 st.phase !== 'ready' &&
-                st.phase !== 'downloading' &&
-                st.phase !== 'tokenizer' &&
-                st.phase !== 'initializing'
+                st.phase !== 'connecting' &&
+                st.phase !== 'downloading'
             ) {
                 void startDownload();
             }
@@ -200,7 +225,7 @@
         window.addEventListener('online', () => {
             refresh();
             const st = window.DiariEmotionOnnx?.getDownloadStatus?.();
-            if (st && st.phase !== 'ready' && st.phase !== 'downloading') {
+            if (st && st.phase !== 'ready' && st.phase !== 'downloading' && st.phase !== 'connecting') {
                 void startDownload();
             }
         });
