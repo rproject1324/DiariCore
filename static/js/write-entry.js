@@ -1962,16 +1962,23 @@ document.addEventListener('DOMContentLoaded', async function () {
         };
 
         const finishOfflineSaveFast = async () => {
+            if (!window.DiariOffline) {
+                throw new Error(
+                    'Offline save module did not load. Close the app completely, reopen on Wi‑Fi once, then try again.'
+                );
+            }
             let savedEntry;
             if (typeof window.DiariOffline.saveEntryLocally === 'function') {
                 const result = await window.DiariOffline.saveEntryLocally(offlinePayloadOpts);
                 savedEntry = result.entry;
-            } else {
+            } else if (typeof window.DiariOffline.buildOfflineEntryPayloadSync === 'function') {
                 const payload = window.DiariOffline.buildOfflineEntryPayloadSync(offlinePayloadOpts);
                 const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
                 entries.push(payload.entry);
                 localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
                 savedEntry = payload.entry;
+            } else {
+                throw new Error('Offline save is outdated. Close the app and reopen on Wi‑Fi to update.');
             }
             try {
                 await showOfflineAnalysisForEntry(savedEntry, true);
@@ -1990,7 +1997,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
         };
 
-        if (saveOffline && window.DiariOffline) {
+        if (saveOffline) {
             try {
                 try {
                     await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
@@ -2081,6 +2088,15 @@ document.addEventListener('DOMContentLoaded', async function () {
             renderImageGallery();
         } catch (error) {
             console.error('Failed to save entry via API:', error);
+            const tryOffline = saveOffline || navigator.onLine === false;
+            if (!tryOffline) {
+                if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
+                    window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
+                }
+                if (window.DiariToast) {
+                    window.DiariToast.show('Could not save your entry. Check your connection.', 'warning', 5000);
+                }
+            } else {
             try {
                 if (!window.DiariMoodAnalysis.showAnalysisLoading) {
                     window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
@@ -2100,6 +2116,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (window.DiariToast) {
                     window.DiariToast.show(errMsg, 'warning', 6000);
                 }
+            }
             }
         } finally {
             setSavingState(false);
