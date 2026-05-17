@@ -26,6 +26,50 @@
         return global.navigator.onLine !== false;
     }
 
+    function isPwaStandalone() {
+        try {
+            if (global.DiariPWA && typeof global.DiariPWA.isStandalone === 'function') {
+                return global.DiariPWA.isStandalone();
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return (
+            (global.document &&
+                global.document.documentElement.classList.contains('diari-pwa-standalone')) ||
+            (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
+            global.navigator.standalone === true
+        );
+    }
+
+    /** Quick same-origin probe — catches airplane mode when navigator.onLine lies. */
+    async function probeReachability() {
+        if (!isOnline()) return false;
+        try {
+            const ctrl = new AbortController();
+            const timer = global.setTimeout(() => ctrl.abort(), 3500);
+            const res = await fetch(
+                (global.location?.origin || '') + '/diariclogo.png?dcReach=' + Date.now(),
+                { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal: ctrl.signal }
+            );
+            global.clearTimeout(timer);
+            return res.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * True when the entry should be saved locally (PWA airplane mode, offline events, or no network).
+     */
+    async function shouldSaveEntryOffline() {
+        if (!isOnline()) return true;
+        if (isPwaStandalone()) {
+            return !(await probeReachability());
+        }
+        return false;
+    }
+
     function getSessionUser() {
         try {
             return JSON.parse(global.localStorage.getItem(USER_KEY) || 'null');
@@ -595,6 +639,9 @@
 
     global.DiariOffline = {
         isOnline,
+        isPwaStandalone,
+        probeReachability,
+        shouldSaveEntryOffline,
         getSessionUser,
         getUserId,
         readEntriesCache,

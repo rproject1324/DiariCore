@@ -6,9 +6,14 @@
     'use strict';
 
     const HF_MODEL_ID = 'sseia/diari-core-mood';
-    const MODEL_URL =
-        'https://huggingface.co/' + HF_MODEL_ID + '/resolve/main/model.onnx';
     const ML_CACHE = 'diaricore-ml-v2';
+
+    /** Same-origin proxy (app.py) — reliable download + progress on mobile PWA. */
+    function modelUrl() {
+        const origin =
+            global.location && global.location.origin ? global.location.origin : '';
+        return origin + '/offline-ml/model.onnx';
+    }
     const WORKER_URL = '/diari-emotion-onnx-worker.js';
     const MAX_LEN = 256;
     /** Hub file size hint when Content-Length is missing (~1.11 GB, same as HF Space). */
@@ -69,7 +74,7 @@
     async function isModelCached() {
         try {
             const cache = await caches.open(ML_CACHE);
-            const hit = await cache.match(MODEL_URL);
+            const hit = await cache.match(modelUrl());
             return Boolean(hit);
         } catch {
             return false;
@@ -79,7 +84,7 @@
     async function readCachedModelSize() {
         try {
             const cache = await caches.open(ML_CACHE);
-            const hit = await cache.match(MODEL_URL);
+            const hit = await cache.match(modelUrl());
             if (!hit) return 0;
             const blob = await hit.blob();
             return blob.size || 0;
@@ -90,7 +95,8 @@
 
     async function fetchModelBuffer() {
         const cache = await caches.open(ML_CACHE);
-        let res = await cache.match(MODEL_URL);
+        const url = modelUrl();
+        let res = await cache.match(url);
 
         if (res) {
             const blob = await res.blob();
@@ -124,7 +130,7 @@
             message: 'Downloading offline emotion model…',
         });
 
-        const response = await fetch(MODEL_URL, { mode: 'cors', credentials: 'omit' });
+        const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
         if (!response.ok) {
             setDownloadProgress({
                 phase: 'error',
@@ -145,7 +151,7 @@
 
         if (!response.body || typeof response.body.getReader !== 'function') {
             const buf = await response.arrayBuffer();
-            await cache.put(MODEL_URL, new Response(buf));
+            await cache.put(url, new Response(buf));
             setDownloadProgress({
                 phase: 'ready',
                 loaded: buf.byteLength,
@@ -180,7 +186,7 @@
             offset += chunk.byteLength;
         }
 
-        await cache.put(MODEL_URL, new Response(merged.buffer));
+        await cache.put(url, new Response(merged.buffer));
         setDownloadProgress({
             phase: 'ready',
             loaded,
@@ -394,12 +400,39 @@
         return global.DiariEmotionPipeline.analyzeFromLogits(clean, logits);
     }
 
+    let downloadPromise = null;
+
+    /** Download model.onnx into Cache API (shows progress events). */
+    function startModelDownload() {
+        if (!isOnline()) {
+            setDownloadProgress({
+                phase: 'unavailable',
+                message: 'Connect to Wi‑Fi to download the offline model',
+            });
+            return Promise.reject(new Error('offline'));
+        }
+        if (downloadPromise) return downloadPromise;
+        downloadPromise = (async () => {
+            try {
+                await fetchModelBuffer();
+            } finally {
+                downloadPromise = null;
+            }
+        })();
+        return downloadPromise;
+    }
+
     /** Fire-and-forget cache warm-up while online; does not change online API behavior. */
     function prepareInBackground() {
         if (!isOnline() || ready || preparing) return;
-        void prepare().catch((e) => {
-            console.info('[DiariEmotionOnnx] Background prepare skipped:', e.message || e);
-        });
+        void (async () => {
+            try {
+                await startModelDownload();
+                await prepare();
+            } catch (e) {
+                console.info('[DiariEmotionOnnx] Background prepare skipped:', e.message || e);
+            }
+        })();
     }
 
     global.DiariEmotionOnnx = {
@@ -410,8 +443,11 @@
         isModelCached,
         getDownloadStatus,
         refreshCachedReadyState,
+        startModelDownload,
         prepareInBackground,
-        MODEL_URL,
+        get MODEL_URL() {
+            return modelUrl();
+        },
         MODEL_BYTES_HINT,
     };
 

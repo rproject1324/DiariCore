@@ -44,6 +44,23 @@
         const pctEl = root.querySelector('.pwa-offline-model-status__pct');
         const sizeEl = root.querySelector('.pwa-offline-model-status__size');
         const hintEl = root.querySelector('.pwa-offline-model-status__hint');
+        const downloadBtn = document.getElementById('pwaOfflineModelDownloadBtn');
+
+        let pollTimer = null;
+
+        function updateDownloadButton(detail) {
+            if (!downloadBtn) return;
+            const phase = detail?.phase || 'idle';
+            const online = navigator.onLine !== false;
+            const show =
+                online &&
+                phase !== 'ready' &&
+                phase !== 'downloading' &&
+                phase !== 'tokenizer' &&
+                phase !== 'initializing';
+            downloadBtn.hidden = !show;
+            downloadBtn.disabled = false;
+        }
 
         function render(detail) {
             if (!detail) return;
@@ -55,7 +72,10 @@
 
             root.classList.toggle('is-ready', phase === 'ready');
             root.classList.toggle('is-error', phase === 'error' || phase === 'unavailable');
-            root.classList.toggle('is-active', phase === 'downloading' || phase === 'tokenizer' || phase === 'initializing');
+            root.classList.toggle(
+                'is-active',
+                phase === 'downloading' || phase === 'tokenizer' || phase === 'initializing'
+            );
 
             if (titleEl) {
                 if (phase === 'ready') {
@@ -99,14 +119,50 @@
             if (hintEl) {
                 hintEl.textContent = detail.message || '';
             }
+
+            updateDownloadButton(detail);
+
+            if (phase === 'downloading' || phase === 'tokenizer' || phase === 'initializing') {
+                if (!pollTimer) {
+                    pollTimer = window.setInterval(refresh, 400);
+                }
+            } else if (pollTimer) {
+                window.clearInterval(pollTimer);
+                pollTimer = null;
+            }
         }
 
         function refresh() {
             if (window.DiariEmotionOnnx?.getDownloadStatus) {
                 render(window.DiariEmotionOnnx.getDownloadStatus());
             }
-            if (window.DiariEmotionOnnx?.refreshCachedReadyState) {
-                void window.DiariEmotionOnnx.refreshCachedReadyState();
+        }
+
+        async function startDownload() {
+            if (!window.DiariEmotionOnnx?.startModelDownload) return;
+            if (navigator.onLine === false) {
+                render({
+                    phase: 'unavailable',
+                    message: 'Connect to Wi‑Fi to download the offline model',
+                });
+                return;
+            }
+            if (downloadBtn) {
+                downloadBtn.disabled = true;
+                downloadBtn.textContent = 'Downloading…';
+            }
+            try {
+                await window.DiariEmotionOnnx.startModelDownload();
+                if (window.DiariEmotionOnnx.prepare) {
+                    await window.DiariEmotionOnnx.prepare();
+                }
+            } catch (e) {
+                console.warn('[PWA] Model download:', e);
+            } finally {
+                if (downloadBtn) {
+                    downloadBtn.textContent = 'Download for offline use';
+                }
+                refresh();
             }
         }
 
@@ -114,11 +170,37 @@
             render(ev.detail);
         });
 
-        refresh();
-
-        if (window.DiariEmotionOnnx?.prepareInBackground && navigator.onLine !== false) {
-            window.DiariEmotionOnnx.prepareInBackground();
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', () => {
+                void startDownload();
+            });
         }
+
+        void (async () => {
+            if (window.DiariEmotionOnnx?.refreshCachedReadyState) {
+                await window.DiariEmotionOnnx.refreshCachedReadyState();
+            }
+            refresh();
+            const st = window.DiariEmotionOnnx?.getDownloadStatus?.();
+            if (
+                navigator.onLine !== false &&
+                st &&
+                st.phase !== 'ready' &&
+                st.phase !== 'downloading' &&
+                st.phase !== 'tokenizer' &&
+                st.phase !== 'initializing'
+            ) {
+                void startDownload();
+            }
+        })();
+
+        window.addEventListener('online', () => {
+            refresh();
+            const st = window.DiariEmotionOnnx?.getDownloadStatus?.();
+            if (st && st.phase !== 'ready' && st.phase !== 'downloading') {
+                void startDownload();
+            }
+        });
     }
 
     if (document.readyState === 'loading') {

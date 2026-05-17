@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pyotp
 import segno
-from flask import Flask, jsonify, request, send_from_directory, abort, session
+from flask import Flask, Response, jsonify, request, send_from_directory, abort, session, stream_with_context
 from werkzeug.security import check_password_hash
 
 import auth_security as authsec
@@ -2291,6 +2291,47 @@ def pwa_service_worker():
     resp.headers["Service-Worker-Allowed"] = "/"
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
+
+HF_OFFLINE_MODEL_URL = os.environ.get(
+    "HF_OFFLINE_MODEL_URL",
+    "https://huggingface.co/sseia/diari-core-mood/resolve/main/model.onnx",
+).strip()
+
+
+@app.route("/offline-ml/model.onnx")
+def offline_ml_model():
+    """
+    Stream the Hub ONNX file from our origin for PWA offline caching only.
+    Online entry analysis still uses the Hugging Face Space (/api); this route is not used there.
+    """
+    import httpx
+
+    try:
+        timeout = httpx.Timeout(180.0, connect=30.0)
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with client.stream("GET", HF_OFFLINE_MODEL_URL) as upstream:
+                upstream.raise_for_status()
+                headers = {
+                    "Content-Type": "application/octet-stream",
+                    "Cache-Control": "public, max-age=604800",
+                }
+                content_length = upstream.headers.get("content-length")
+                if content_length:
+                    headers["Content-Length"] = content_length
+
+                def generate():
+                    try:
+                        for chunk in upstream.iter_bytes(chunk_size=512 * 1024):
+                            if chunk:
+                                yield chunk
+                    finally:
+                        upstream.close()
+
+                return Response(stream_with_context(generate()), status=200, headers=headers)
+    except Exception as e:
+        print(f"[offline-ml] model proxy error: {type(e).__name__}: {e}")
+        abort(502)
 
 
 @app.route("/<path:filename>")

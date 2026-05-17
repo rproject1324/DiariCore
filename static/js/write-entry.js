@@ -732,8 +732,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         return navigator.onLine !== false;
     }
 
-    function shouldUseOfflineSave() {
-        return Boolean(window.DiariOffline) && !isOnlineNow();
+    async function shouldUseOfflineSave() {
+        if (!window.DiariOffline) return !isOnlineNow();
+        if (typeof window.DiariOffline.shouldSaveEntryOffline === 'function') {
+            return window.DiariOffline.shouldSaveEntryOffline();
+        }
+        return !isOnlineNow();
     }
 
     function readJsonStorage(key, fallbackValue) {
@@ -1842,16 +1846,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         renderTagButtons();
 
         const userId = getCurrentUserId();
+        const saveOffline = await shouldUseOfflineSave();
 
         setSavingState(true);
         window.DiariMoodAnalysis.resetSession();
         const analysisOverlay = window.DiariMoodAnalysis.ensureAnalysisOverlay();
-        try {
-            await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
-        } catch (_) {
-            /* overlay still shows copy-only loading */
-        }
-        window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
 
         const offlinePayloadOpts = {
             userId,
@@ -1932,41 +1931,34 @@ document.addEventListener('DOMContentLoaded', async function () {
             localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
         };
 
-        const finishOfflineSave = async () => {
-            const payload = await window.DiariOffline.buildOfflineEntryPayload(offlinePayloadOpts);
-            await persistOfflinePayload(payload);
-            await showOfflineAnalysisForEntry(payload.entry);
-        };
-
         const finishOfflineSaveFast = async () => {
             const payload = window.DiariOffline.buildOfflineEntryPayloadSync(offlinePayloadOpts);
             await persistOfflinePayload(payload);
             await showOfflineAnalysisForEntry(payload.entry);
         };
 
-        if (shouldUseOfflineSave()) {
+        if (saveOffline && window.DiariOffline) {
             try {
-                await finishOfflineSave();
-            } catch (offlineErr) {
-                console.error('Offline save failed, using fast recovery:', offlineErr);
                 try {
-                    await finishOfflineSaveFast();
-                } catch (recoveryErr) {
-                    console.error('Offline recovery failed:', recoveryErr);
-                    if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
-                        window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
-                    } else {
-                        analysisOverlay.hidden = true;
-                    }
-                    if (window.DiariToast) {
-                        window.DiariToast.show(
-                            'Could not save offline. Try again or reconnect to save.',
-                            'warning',
-                            5000
-                        );
-                    } else {
-                        alert('Could not save offline. Try again or reconnect to save.');
-                    }
+                    await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
+                } catch (_) {
+                    /* cached lottie or copy-only */
+                }
+                window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
+                await finishOfflineSaveFast();
+            } catch (offlineErr) {
+                console.error('Offline save failed:', offlineErr);
+                if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
+                    window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
+                } else {
+                    analysisOverlay.hidden = true;
+                }
+                if (window.DiariToast) {
+                    window.DiariToast.show(
+                        'Could not save offline. Free some storage or try again.',
+                        'warning',
+                        5000
+                    );
                 }
             } finally {
                 setSavingState(false);
@@ -1975,6 +1967,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         try {
+            try {
+                await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
+            } catch (_) {
+                /* overlay still shows copy-only loading */
+            }
+            window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
             let imageUrls = attachedImages.map((img) => img.url).filter(Boolean);
             if (isOnlineNow() && userId) {
                 const pendingUploads = attachedImages.filter((img) => !img.url && img.dataUrl);
@@ -2032,34 +2030,29 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.error('Failed to save entry via API:', error);
             if (window.DiariOffline) {
                 try {
-                    await finishOfflineSave();
-                } catch (offlineErr) {
-                    console.error('Offline fallback after API failure:', offlineErr);
-                    try {
-                        await finishOfflineSaveFast();
-                    } catch (recoveryErr) {
-                        console.error('Offline recovery failed:', recoveryErr);
-                        if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
-                            window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
-                        } else {
-                            analysisOverlay.hidden = true;
-                        }
-                        if (window.DiariToast) {
-                            window.DiariToast.show(
-                                'Saved locally failed. Check storage or reconnect and try again.',
-                                'warning',
-                                5000
-                            );
-                        } else {
-                            alert('Could not save your entry. Check your connection and try again.');
-                        }
+                    await finishOfflineSaveFast();
+                } catch (recoveryErr) {
+                    console.error('Offline recovery failed:', recoveryErr);
+                    if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
+                        window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
+                    } else {
+                        analysisOverlay.hidden = true;
+                    }
+                    if (window.DiariToast) {
+                        window.DiariToast.show(
+                            'Could not save locally. Reconnect or free storage and try again.',
+                            'warning',
+                            5000
+                        );
                     }
                 }
             } else {
                 if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
                     window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
                 }
-                alert('Could not save your entry. Check your connection and try again.');
+                if (window.DiariToast) {
+                    window.DiariToast.show('Could not save your entry. Check your connection.', 'warning', 5000);
+                }
             }
         } finally {
             setSavingState(false);
