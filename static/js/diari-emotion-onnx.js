@@ -19,6 +19,8 @@
         return origin + '/offline-ml/model.onnx';
     }
     const WORKER_URL = '/diari-emotion-onnx-worker.js';
+    const TRANSFORMERS_ESM = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm';
+    const PREPARE_TIMEOUT_MS = 120000;
     const MAX_LEN = 256;
     /** Hub file size hint when Content-Length is missing (~1.11 GB, same as HF Space). */
     const MODEL_BYTES_HINT = Math.round(1.11 * 1024 * 1024 * 1024);
@@ -422,9 +424,13 @@
             message: 'Downloading tokenizer files…',
         });
 
-        const mod = await import(
-            /* webpackIgnore: true */ 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/+esm'
-        );
+        let mod;
+        try {
+            mod = await import(/* webpackIgnore: true */ TRANSFORMERS_ESM);
+        } catch (cdnErr) {
+            console.warn('[DiariEmotionOnnx] Transformers CDN import failed:', cdnErr);
+            throw cdnErr;
+        }
         const { AutoTokenizer, env } = mod;
         env.allowLocalModels = false;
         env.useBrowserCache = true;
@@ -487,6 +493,36 @@
                 percent: 0,
                 message: 'Tap Download to save ' + MODEL_TOTAL_LABEL + ' for offline use',
             });
+        }
+    }
+
+    /**
+     * Load tokenizer + worker when model bytes are already on device (works offline if
+     * tokenizer/CDN were cached during a prior online prepare).
+     */
+    async function ensurePreparedForInference() {
+        if (ready) return true;
+        const cached = await isModelCached();
+        if (!cached) return false;
+        if (preparing) {
+            try {
+                await preparing;
+                return ready;
+            } catch {
+                return false;
+            }
+        }
+        try {
+            await Promise.race([
+                prepare(),
+                new Promise((_, reject) => {
+                    setTimeout(() => reject(new Error('Offline model prepare timeout')), PREPARE_TIMEOUT_MS);
+                }),
+            ]);
+            return ready;
+        } catch (e) {
+            console.warn('[DiariEmotionOnnx] ensurePreparedForInference:', e.message || e);
+            return false;
         }
     }
 
@@ -601,13 +637,17 @@
         return downloadPromise;
     }
 
-    /** Fire-and-forget cache warm-up while online; does not change online API behavior. */
+    /** Warm tokenizer + worker when model is on device (online or offline). */
     function prepareInBackground() {
-        if (!isOnline() || ready || preparing) return;
+        if (ready || preparing) return;
         void (async () => {
             try {
-                await startModelDownload();
-                await prepare();
+                const cached = await isModelCached();
+                if (!cached) {
+                    if (!isOnline()) return;
+                    await startModelDownload();
+                }
+                await ensurePreparedForInference();
             } catch (e) {
                 console.info('[DiariEmotionOnnx] Background prepare skipped:', e.message || e);
             }
@@ -616,6 +656,7 @@
 
     global.DiariEmotionOnnx = {
         prepare,
+        ensurePreparedForInference,
         analyze,
         isReady: () => ready,
         isPreparing: () => Boolean(preparing),

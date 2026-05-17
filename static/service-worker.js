@@ -2,15 +2,30 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v14';
+const CACHE_NAME = 'diaricore-pwa-v15';
 const ML_CACHE_PREFIX = 'diaricore-ml-';
+const HF_CACHE_PREFIX = 'diaricore-hf-';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
-/** Never delete ONNX model caches on SW update — only old app-shell caches. */
+/** Never delete ONNX / Hugging Face tokenizer caches on SW update — only old app-shell caches. */
 function shouldDeleteCacheOnActivate(name) {
     if (name.startsWith(ML_CACHE_PREFIX)) return false;
+    if (name.startsWith(HF_CACHE_PREFIX)) return false;
     if (name === CACHE_NAME) return false;
     if (name.startsWith(PWA_CACHE_PREFIX)) return true;
+    return false;
+}
+
+function isOfflineMlCdnRequest(url) {
+    if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('@xenova/transformers')) {
+        return true;
+    }
+    if (url.hostname === 'huggingface.co' || url.hostname.endsWith('.hf.co')) {
+        return (
+            url.pathname.includes('sseia/diari-core-mood') ||
+            url.pathname.includes('models--sseia--diari-core-mood')
+        );
+    }
     return false;
 }
 
@@ -98,6 +113,28 @@ self.addEventListener('fetch', (event) => {
     if (request.method !== 'GET') return;
 
     const url = new URL(request.url);
+
+    if (isOfflineMlCdnRequest(url)) {
+        event.respondWith(
+            (async () => {
+                const cacheName = HF_CACHE_PREFIX + 'v1';
+                const cached = await caches.match(request);
+                if (cached) return cached;
+                try {
+                    const res = await fetch(request);
+                    if (res.ok) {
+                        const copy = res.clone();
+                        caches.open(cacheName).then((c) => c.put(request, copy));
+                    }
+                    return res;
+                } catch {
+                    return cached || Response.error();
+                }
+            })()
+        );
+        return;
+    }
+
     if (url.origin !== self.location.origin) return;
     if (isApiRequest(url)) return;
 

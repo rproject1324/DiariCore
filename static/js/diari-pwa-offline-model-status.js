@@ -185,6 +185,18 @@
 
             try {
                 await window.DiariEmotionOnnx.startModelDownload();
+                if (window.DiariEmotionOnnx.ensurePreparedForInference) {
+                    render({
+                        phase: 'initializing',
+                        loaded: window.DiariEmotionOnnx.getDownloadStatus?.().loaded || 0,
+                        total: window.DiariEmotionOnnx.MODEL_BYTES_HINT || 0,
+                        percent: 100,
+                        message: 'Preparing offline analysis engine…',
+                    });
+                    await window.DiariEmotionOnnx.ensurePreparedForInference();
+                } else if (window.DiariEmotionOnnx.prepare) {
+                    await window.DiariEmotionOnnx.prepare();
+                }
             } catch (e) {
                 console.warn('[PWA] Model download:', e);
                 render({
@@ -217,7 +229,12 @@
                 window.DiariEmotionOnnx?.isModelCached &&
                 (await window.DiariEmotionOnnx.isModelCached());
             refresh();
-            if (cached) return;
+            if (cached) {
+                if (window.DiariEmotionOnnx.prepareInBackground) {
+                    window.DiariEmotionOnnx.prepareInBackground();
+                }
+                return;
+            }
             const st = window.DiariEmotionOnnx?.getDownloadStatus?.();
             if (
                 navigator.onLine !== false &&

@@ -326,7 +326,7 @@
     /**
      * Lightweight local emotion estimate when the API is unreachable.
      */
-    const OFFLINE_ONNX_PREPARE_MS = 15000;
+    const OFFLINE_ONNX_PREPARE_MS = 120000;
 
     function formatOfflineAnalysis(result) {
         return {
@@ -341,49 +341,38 @@
      * Never blocks on a multi‑minute Hub download while offline.
      */
     async function analyzeForOffline(text) {
-        if (global.DiariEmotionOnnx?.isReady?.()) {
-            try {
-                const result = await global.DiariEmotionOnnx.analyze(text);
-                if (result && result.emotionLabel) {
-                    return formatOfflineAnalysis(result);
-                }
-            } catch (err) {
-                console.warn(
-                    '[DiariOffline] Cached ONNX analyze failed, using heuristic:',
-                    err && err.message ? err.message : err
-                );
-            }
-            return analyzeTextLocally(text);
-        }
-
-        if (!isOnline()) {
-            if (global.DiariEmotionOnnx) {
-                console.info(
-                    '[DiariOffline] Offline without cached ONNX — fast local estimate (sync when online for full model)'
-                );
-            }
-            return analyzeTextLocally(text);
-        }
-
-        if (global.DiariEmotionOnnx && global.DiariEmotionPipeline) {
+        if (global.DiariEmotionOnnx) {
             try {
                 const cached = await global.DiariEmotionOnnx.isModelCached();
-                if (!cached) {
-                    return analyzeTextLocally(text);
-                }
-                await Promise.race([
-                    global.DiariEmotionOnnx.prepare(),
-                    new Promise((_, reject) => {
-                        setTimeout(() => reject(new Error('ONNX prepare timeout')), OFFLINE_ONNX_PREPARE_MS);
-                    }),
-                ]);
-                const result = await global.DiariEmotionOnnx.analyze(text);
-                if (result && result.emotionLabel) {
-                    return formatOfflineAnalysis(result);
+                if (cached) {
+                    const ensureFn =
+                        global.DiariEmotionOnnx.ensurePreparedForInference ||
+                        global.DiariEmotionOnnx.prepare;
+                    if (!global.DiariEmotionOnnx.isReady?.()) {
+                        await Promise.race([
+                            ensureFn.call(global.DiariEmotionOnnx),
+                            new Promise((_, reject) => {
+                                setTimeout(
+                                    () => reject(new Error('ONNX prepare timeout')),
+                                    OFFLINE_ONNX_PREPARE_MS
+                                );
+                            }),
+                        ]);
+                    }
+                    if (global.DiariEmotionOnnx.isReady?.()) {
+                        const result = await global.DiariEmotionOnnx.analyze(text);
+                        if (result && result.emotionLabel) {
+                            return formatOfflineAnalysis({
+                                ...result,
+                                engine: 'offline-onnx',
+                                moodScoringOffline: false,
+                            });
+                        }
+                    }
                 }
             } catch (err) {
                 console.warn(
-                    '[DiariOffline] Browser ONNX analyze unavailable, using heuristic:',
+                    '[DiariOffline] ONNX analyze unavailable, using heuristic:',
                     err && err.message ? err.message : err
                 );
             }

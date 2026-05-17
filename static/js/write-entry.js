@@ -15,6 +15,13 @@ document.addEventListener('DOMContentLoaded', async function () {
         window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
     }
 
+    if (
+        (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator.standalone) &&
+        window.DiariEmotionOnnx?.prepareInBackground
+    ) {
+        window.DiariEmotionOnnx.prepareInBackground();
+    }
+
     function normalizeTag(tag) {
         let t = String(tag || '').trim().replace(/\s+/g, ' ');
         if (window.DiariSecurity && typeof window.DiariSecurity.stripAngleBrackets === 'function') {
@@ -829,24 +836,35 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     async function analyzeForSaveOffline(text) {
+        const onnx = window.DiariEmotionOnnx;
+        if (onnx) {
+            try {
+                const cached = await onnx.isModelCached();
+                if (cached) {
+                    if (!onnx.isReady?.()) {
+                        const ensure =
+                            onnx.ensurePreparedForInference || (() => onnx.prepare());
+                        await ensure.call(onnx);
+                    }
+                    if (onnx.isReady?.()) {
+                        const result = await onnx.analyze(text);
+                        if (result?.emotionLabel) {
+                            return {
+                                ...result,
+                                feeling: result.feeling || result.emotionLabel,
+                                moodScoringOffline: false,
+                                engine: 'offline-onnx',
+                            };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[WriteEntry] Offline ONNX analyze failed:', e);
+            }
+        }
         if (window.DiariOffline?.analyzeForOffline) {
             try {
                 return await window.DiariOffline.analyzeForOffline(text);
-            } catch (_) {
-                /* fall through */
-            }
-        }
-        if (window.DiariEmotionOnnx?.isReady?.()) {
-            try {
-                const result = await window.DiariEmotionOnnx.analyze(text);
-                if (result?.emotionLabel) {
-                    return {
-                        ...result,
-                        feeling: result.feeling || result.emotionLabel,
-                        moodScoringOffline: false,
-                        engine: 'offline-onnx',
-                    };
-                }
             } catch (_) {
                 /* heuristic */
             }
@@ -2129,9 +2147,9 @@ document.addEventListener('DOMContentLoaded', async function () {
                 await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
             }
             const offlineFallback =
-                savedEntry.moodScoringOffline === true ||
+                savedEntry.engine === 'offline-local' ||
                 savedEntry.engine === 'fallback' ||
-                !savedEntry.engine;
+                (savedEntry.moodScoringOffline === true && savedEntry.engine !== 'offline-onnx');
             window.DiariMoodAnalysis.showAnalysisResult(
                 analysisOverlay,
                 savedEntry,
@@ -2188,6 +2206,13 @@ document.addEventListener('DOMContentLoaded', async function () {
                     }
                     if (analysisOverlay && window.DiariMoodAnalysis.showAnalysisLoading) {
                         window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
+                        const hint = analysisOverlay.querySelector('.mood-analysis-loading__hint');
+                        if (hint && window.DiariEmotionOnnx) {
+                            const cached = await window.DiariEmotionOnnx.isModelCached();
+                            if (cached && !window.DiariEmotionOnnx.isReady?.()) {
+                                hint.textContent = 'Loading offline emotion model…';
+                            }
+                        }
                     }
                 }
                 await finishOfflineSaveFast();
