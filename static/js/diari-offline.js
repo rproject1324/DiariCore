@@ -42,18 +42,26 @@
         );
     }
 
-    /** Quick same-origin probe — catches airplane mode when navigator.onLine lies. */
+    /**
+     * Live network check — must hit /api (never served from SW precache).
+     * Do NOT use /diariclogo.png: the service worker returns cached 200 while offline.
+     */
     async function probeReachability() {
         if (!isOnline()) return false;
         try {
             const ctrl = new AbortController();
-            const timer = global.setTimeout(() => ctrl.abort(), 3500);
-            const res = await fetch(
-                (global.location?.origin || '') + '/diariclogo.png?dcReach=' + Date.now(),
-                { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal: ctrl.signal }
-            );
+            const timer = global.setTimeout(() => ctrl.abort(), 4500);
+            const res = await fetch('/api/health?dcReach=' + Date.now(), {
+                method: 'GET',
+                cache: 'no-store',
+                credentials: 'same-origin',
+                signal: ctrl.signal,
+                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+            });
             global.clearTimeout(timer);
-            return res.ok;
+            if (!res.ok) return false;
+            const data = await res.json().catch(() => ({}));
+            return data && data.ok === true;
         } catch {
             return false;
         }

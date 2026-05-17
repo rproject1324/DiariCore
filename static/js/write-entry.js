@@ -732,12 +732,51 @@ document.addEventListener('DOMContentLoaded', async function () {
         return navigator.onLine !== false;
     }
 
+    async function probeLiveNetwork() {
+        try {
+            const ctrl = new AbortController();
+            const timer = window.setTimeout(() => ctrl.abort(), 4500);
+            const res = await fetch('/api/health?dcReach=' + Date.now(), {
+                method: 'GET',
+                cache: 'no-store',
+                credentials: 'same-origin',
+                signal: ctrl.signal,
+                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+            });
+            window.clearTimeout(timer);
+            if (!res.ok) return false;
+            const data = await res.json().catch(() => ({}));
+            return Boolean(data && data.ok);
+        } catch {
+            return false;
+        }
+    }
+
+    function isPwaStandaloneApp() {
+        try {
+            if (window.DiariPWA && typeof window.DiariPWA.isStandalone === 'function') {
+                return window.DiariPWA.isStandalone();
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return (
+            document.documentElement.classList.contains('diari-pwa-standalone') ||
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            window.navigator.standalone === true
+        );
+    }
+
     async function shouldUseOfflineSave() {
-        if (!window.DiariOffline) return !isOnlineNow();
-        if (typeof window.DiariOffline.shouldSaveEntryOffline === 'function') {
+        if (navigator.onLine === false) return true;
+        if (isPwaStandaloneApp()) {
+            const reachable = await probeLiveNetwork();
+            if (!reachable) return true;
+        }
+        if (window.DiariOffline && typeof window.DiariOffline.shouldSaveEntryOffline === 'function') {
             return window.DiariOffline.shouldSaveEntryOffline();
         }
-        return !isOnlineNow();
+        return navigator.onLine === false;
     }
 
     function readJsonStorage(key, fallbackValue) {
@@ -2028,30 +2067,24 @@ document.addEventListener('DOMContentLoaded', async function () {
             renderImageGallery();
         } catch (error) {
             console.error('Failed to save entry via API:', error);
-            if (window.DiariOffline) {
-                try {
-                    await finishOfflineSaveFast();
-                } catch (recoveryErr) {
-                    console.error('Offline recovery failed:', recoveryErr);
-                    if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
-                        window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
-                    } else {
-                        analysisOverlay.hidden = true;
-                    }
-                    if (window.DiariToast) {
-                        window.DiariToast.show(
-                            'Could not save locally. Reconnect or free storage and try again.',
-                            'warning',
-                            5000
-                        );
-                    }
+            try {
+                if (!window.DiariMoodAnalysis.showAnalysisLoading) {
+                    window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
                 }
-            } else {
+                await finishOfflineSaveFast();
+            } catch (recoveryErr) {
+                console.error('Offline recovery failed:', recoveryErr);
                 if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
                     window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
+                } else {
+                    analysisOverlay.hidden = true;
                 }
                 if (window.DiariToast) {
-                    window.DiariToast.show('Could not save your entry. Check your connection.', 'warning', 5000);
+                    window.DiariToast.show(
+                        'Could not save offline. Free some storage and try again.',
+                        'warning',
+                        5000
+                    );
                 }
             }
         } finally {

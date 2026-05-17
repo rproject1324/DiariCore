@@ -18,6 +18,7 @@
     const MAX_LEN = 256;
     /** Hub file size hint when Content-Length is missing (~1.11 GB, same as HF Space). */
     const MODEL_BYTES_HINT = Math.round(1.11 * 1024 * 1024 * 1024);
+    const MODEL_MIN_BYTES = Math.round(0.9 * 1024 * 1024 * 1024);
     const MODEL_TOTAL_LABEL = '1.11 GB';
 
     let ready = false;
@@ -162,6 +163,16 @@
                     reject(new Error('Download returned empty file'));
                     return;
                 }
+                if (buf.byteLength < MODEL_MIN_BYTES) {
+                    reject(
+                        new Error(
+                            'Download incomplete (' +
+                                formatLoadedForDisplay(buf.byteLength) +
+                                '). Tap Download again on Wi‑Fi.'
+                        )
+                    );
+                    return;
+                }
                 try {
                     const cache = await caches.open(ML_CACHE);
                     await cache.put(cacheKeyUrl, new Response(buf));
@@ -204,7 +215,21 @@
 
         if (res) {
             const blob = await res.blob();
-            const size = blob.size || MODEL_BYTES_HINT;
+            const size = blob.size || 0;
+            if (size < MODEL_MIN_BYTES) {
+                await cache.delete(url);
+                setDownloadProgress({
+                    phase: 'error',
+                    loaded: size,
+                    total: MODEL_BYTES_HINT,
+                    percent: 0,
+                    message:
+                        'Cached file incomplete (' +
+                        formatLoadedForDisplay(size) +
+                        '). Tap Download on Profile (Wi‑Fi).',
+                });
+                throw new Error('Cached model file is too small');
+            }
             setDownloadProgress({
                 phase: 'ready',
                 loaded: size,
