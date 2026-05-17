@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v7';
+const CACHE_NAME = 'diaricore-pwa-v8';
 
 const PRECACHE_URLS = [
     '/login.html',
@@ -40,6 +40,7 @@ const PRECACHE_URLS = [
 
 function isApiRequest(url) {
     return url.pathname.startsWith('/api/') || url.pathname.startsWith('/offline-ml/');
+    /* offline-ml: resolve JSON + optional redirect; never served from precache */
 }
 
 function isStaticAsset(url) {

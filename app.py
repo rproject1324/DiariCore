@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pyotp
 import segno
-from flask import Flask, Response, jsonify, request, send_from_directory, abort, session, stream_with_context
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory, abort, session, stream_with_context
 from werkzeug.security import check_password_hash
 
 import auth_security as authsec
@@ -2299,39 +2299,85 @@ HF_OFFLINE_MODEL_URL = os.environ.get(
 ).strip()
 
 
+def _hf_hub_request_headers():
+    token = (os.environ.get("HF_TOKEN") or os.environ.get("HF_API_TOKEN") or "").strip()
+    headers = {"User-Agent": "DiariCore-PWA/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _resolve_hf_offline_model_url():
+    """Follow Hub redirects; return final CDN URL (tiny ranged GET, no full download)."""
+    import httpx
+
+    headers = _hf_hub_request_headers()
+    timeout = httpx.Timeout(90.0, connect=30.0)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        with client.stream(
+            "GET",
+            HF_OFFLINE_MODEL_URL,
+            headers={**headers, "Range": "bytes=0-0"},
+        ) as upstream:
+            upstream.raise_for_status()
+            final_url = str(upstream.url)
+            for _ in upstream.iter_bytes():
+                break
+    if not final_url:
+        raise RuntimeError("Could not resolve Hugging Face model URL")
+    return final_url
+
+
+@app.route("/offline-ml/resolve")
+def offline_ml_resolve():
+    """
+    PWA helper: return the CDN URL for model.onnx so the client can download with progress.
+    Does not affect /api emotion analysis (Space).
+    """
+    try:
+        final_url = _resolve_hf_offline_model_url()
+        return jsonify({"success": True, "url": final_url}), 200
+    except Exception as e:
+        print(f"[offline-ml] resolve error: {type(e).__name__}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 502
+
+
 @app.route("/offline-ml/model.onnx")
 def offline_ml_model():
     """
-    Stream the Hub ONNX file from our origin for PWA offline caching only.
-    Online entry analysis still uses the Hugging Face Space (/api); this route is not used there.
-    """
+  PWA: redirect to Hub CDN (preferred). Falls back to streaming through this app if resolve fails.
+  """
+    try:
+        final_url = _resolve_hf_offline_model_url()
+        resp = redirect(final_url, code=302)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:
+        print(f"[offline-ml] redirect failed, streaming fallback: {type(e).__name__}: {e}")
+        return _offline_ml_stream_response()
+
+
+def _offline_ml_stream_response():
+    """Stream ONNX through Railway (fallback when redirect resolve fails)."""
     import httpx
 
-    try:
-        timeout = httpx.Timeout(180.0, connect=30.0)
+    headers = _hf_hub_request_headers()
+
+    @stream_with_context
+    def generate():
+        timeout = httpx.Timeout(600.0, connect=60.0, read=600.0)
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            with client.stream("GET", HF_OFFLINE_MODEL_URL) as upstream:
+            with client.stream("GET", HF_OFFLINE_MODEL_URL, headers=headers) as upstream:
                 upstream.raise_for_status()
-                headers = {
-                    "Content-Type": "application/octet-stream",
-                    "Cache-Control": "public, max-age=604800",
-                }
-                content_length = upstream.headers.get("content-length")
-                if content_length:
-                    headers["Content-Length"] = content_length
+                for chunk in upstream.iter_bytes(chunk_size=256 * 1024):
+                    if chunk:
+                        yield chunk
 
-                def generate():
-                    try:
-                        for chunk in upstream.iter_bytes(chunk_size=512 * 1024):
-                            if chunk:
-                                yield chunk
-                    finally:
-                        upstream.close()
-
-                return Response(stream_with_context(generate()), status=200, headers=headers)
-    except Exception as e:
-        print(f"[offline-ml] model proxy error: {type(e).__name__}: {e}")
-        abort(502)
+    out_headers = {
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "public, max-age=604800",
+    }
+    return Response(generate(), status=200, headers=out_headers)
 
 
 @app.route("/<path:filename>")

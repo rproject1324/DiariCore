@@ -81,6 +81,43 @@
         }
     }
 
+    async function fetchModelResponse(cacheKeyUrl) {
+        const origin = global.location && global.location.origin ? global.location.origin : '';
+
+        try {
+            const resolveRes = await fetch(origin + '/offline-ml/resolve', {
+                credentials: 'same-origin',
+                cache: 'no-store',
+            });
+            if (resolveRes.ok) {
+                const data = await resolveRes.json().catch(() => ({}));
+                if (data && data.success && data.url) {
+                    const cdnRes = await fetch(data.url, {
+                        mode: 'cors',
+                        credentials: 'omit',
+                        cache: 'no-store',
+                    });
+                    if (cdnRes.ok) {
+                        return cdnRes;
+                    }
+                    console.warn(
+                        '[DiariEmotionOnnx] CDN fetch failed:',
+                        cdnRes.status,
+                        '— trying app proxy'
+                    );
+                }
+            }
+        } catch (resolveErr) {
+            console.warn('[DiariEmotionOnnx] resolve failed, trying proxy:', resolveErr);
+        }
+
+        return fetch(cacheKeyUrl, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            redirect: 'follow',
+        });
+    }
+
     async function readCachedModelSize() {
         try {
             const cache = await caches.open(ML_CACHE);
@@ -130,11 +167,11 @@
             message: 'Downloading offline emotion model…',
         });
 
-        const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+        const response = await fetchModelResponse(url);
         if (!response.ok) {
             setDownloadProgress({
                 phase: 'error',
-                message: 'Model download failed (' + response.status + ')',
+                message: 'Model download failed (' + response.status + '). Use Wi‑Fi and tap Download again.',
             });
             throw new Error('Model download failed: ' + response.status);
         }
