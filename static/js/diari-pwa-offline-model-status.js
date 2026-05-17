@@ -143,7 +143,10 @@
             if (navigator.onLine === false) {
                 render({
                     phase: 'unavailable',
-                    message: 'Connect to Wi‑Fi to download the offline model',
+                    loaded: 0,
+                    total: window.DiariEmotionOnnx?.MODEL_BYTES_HINT || 0,
+                    percent: 0,
+                    message: 'Turn off airplane mode and use Wi‑Fi to download (~1.1 GB)',
                 });
                 return;
             }
