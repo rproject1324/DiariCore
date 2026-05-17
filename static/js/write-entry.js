@@ -11,7 +11,9 @@ document.addEventListener('DOMContentLoaded', async function () {
     let pickerOpenedAtLocalStr = '';
     let priorManualDateTimeOnPickerOpen = null;
 
-    window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
+    if (window.DiariMoodAnalysis?.primeMoodAnalysisBookLottie) {
+        window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
+    }
 
     function normalizeTag(tag) {
         let t = String(tag || '').trim().replace(/\s+/g, ' ');
@@ -779,32 +781,189 @@ document.addEventListener('DOMContentLoaded', async function () {
         return navigator.onLine === false;
     }
 
-    /** Load offline module if missing (stale PWA shell or script failed on first paint). */
-    async function ensureDiariOfflineLoaded() {
-        if (window.DiariOffline && typeof window.DiariOffline.saveEntryLocally === 'function') {
-            return true;
-        }
-        const existing = document.querySelector('script[src*="diari-offline"]');
-        if (existing) {
-            await new Promise((resolve) => {
-                if (window.DiariOffline) {
-                    resolve();
-                    return;
-                }
-                existing.addEventListener('load', () => resolve(), { once: true });
-                existing.addEventListener('error', () => resolve(), { once: true });
-                setTimeout(resolve, 800);
+    const OFFLINE_ENTRIES_KEY = 'diariCoreEntries';
+    const OFFLINE_ENTRIES_OWNER_KEY = 'diariCoreEntriesOwnerId';
+    const OFFLINE_CREATE_QUEUE_LS = 'diariCoreOfflineCreateQueue';
+    const OFFLINE_MEDIA_DB = 'diariCoreOfflineMedia';
+    const OFFLINE_MEDIA_STORE = 'pendingEntries';
+
+    function analyzeTextLocallyBuiltin(text) {
+        const t = String(text || '').toLowerCase();
+        const scores = { happy: 0.15, sad: 0.15, angry: 0.12, anxious: 0.12, neutral: 0.46 };
+        const lex = {
+            happy: ['happy', 'joy', 'grateful', 'excited', 'love', 'wonderful', 'great', 'amazing', 'blessed', 'proud'],
+            sad: ['sad', 'cry', 'depressed', 'lonely', 'grief', 'tears', 'miss', 'hurt', 'heartbroken'],
+            angry: ['angry', 'furious', 'mad', 'hate', 'rage', 'annoyed', 'frustrated', 'irritated'],
+            anxious: ['anxious', 'worried', 'stress', 'stressed', 'nervous', 'panic', 'afraid', 'overwhelm', 'scared'],
+        };
+        Object.keys(lex).forEach((k) => {
+            lex[k].forEach((w) => {
+                if (t.includes(w)) scores[k] += 0.22;
             });
-            if (window.DiariOffline) return true;
-        }
-        return new Promise((resolve) => {
-            const s = document.createElement('script');
-            s.src = '/diari-offline.js';
-            s.async = false;
-            s.onload = () => resolve(Boolean(window.DiariOffline));
-            s.onerror = () => resolve(false);
-            document.head.appendChild(s);
         });
+        let top = 'neutral';
+        let topScore = scores.neutral;
+        Object.keys(scores).forEach((k) => {
+            if (scores[k] > topScore) {
+                topScore = scores[k];
+                top = k;
+            }
+        });
+        const sum = Object.values(scores).reduce((a, b) => a + b, 0) || 1;
+        const all_probs = {};
+        Object.keys(scores).forEach((k) => {
+            all_probs[k] = Math.round((scores[k] / sum) * 1000) / 1000;
+        });
+        const confidence = Math.min(0.92, Math.max(0.42, topScore / sum));
+        return {
+            emotionLabel: top,
+            feeling: top,
+            emotionScore: confidence,
+            sentimentLabel:
+                top === 'happy' ? 'positive' : top === 'sad' || top === 'angry' || top === 'anxious' ? 'negative' : 'neutral',
+            sentimentScore: confidence,
+            all_probs,
+            moodScoringOffline: true,
+            engine: 'offline-local',
+        };
+    }
+
+    async function analyzeForSaveOffline(text) {
+        if (window.DiariOffline?.analyzeForOffline) {
+            try {
+                return await window.DiariOffline.analyzeForOffline(text);
+            } catch (_) {
+                /* fall through */
+            }
+        }
+        if (window.DiariEmotionOnnx?.isReady?.()) {
+            try {
+                const result = await window.DiariEmotionOnnx.analyze(text);
+                if (result?.emotionLabel) {
+                    return {
+                        ...result,
+                        feeling: result.feeling || result.emotionLabel,
+                        moodScoringOffline: false,
+                        engine: 'offline-onnx',
+                    };
+                }
+            } catch (_) {
+                /* heuristic */
+            }
+        }
+        return analyzeTextLocallyBuiltin(text);
+    }
+
+    function readOfflineCreateQueueLs() {
+        try {
+            const arr = JSON.parse(localStorage.getItem(OFFLINE_CREATE_QUEUE_LS) || '[]');
+            return Array.isArray(arr) ? arr : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function writeOfflineCreateQueueLs(rows) {
+        localStorage.setItem(OFFLINE_CREATE_QUEUE_LS, JSON.stringify(rows));
+    }
+
+    function openOfflineMediaDb() {
+        return new Promise((resolve, reject) => {
+            if (typeof indexedDB === 'undefined') {
+                reject(new Error('IndexedDB unavailable'));
+                return;
+            }
+            const req = indexedDB.open(OFFLINE_MEDIA_DB, 1);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(OFFLINE_MEDIA_STORE)) {
+                    db.createObjectStore(OFFLINE_MEDIA_STORE, { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+        });
+    }
+
+    async function queueOfflineCreateRecord(record) {
+        try {
+            const db = await openOfflineMediaDb();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(OFFLINE_MEDIA_STORE, 'readwrite');
+                tx.objectStore(OFFLINE_MEDIA_STORE).put(record);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            db.close();
+            return true;
+        } catch (e) {
+            console.warn('[WriteEntry] IndexedDB queue failed, using localStorage:', e);
+            const q = readOfflineCreateQueueLs();
+            q.push(record);
+            writeOfflineCreateQueueLs(q);
+            return false;
+        }
+    }
+
+    /** Saves offline without diari-offline.js (PWA script cache miss). */
+    async function saveEntryOfflineBuiltin(opts) {
+        const analysis = await analyzeForSaveOffline(opts.text || '');
+        const now = new Date().toISOString();
+        const localId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const queueId = `offline_entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const imageUrls = (opts.images || [])
+            .map((im) => im.url || '')
+            .filter((u) => u && !String(u).startsWith('data:'));
+
+        const entry = {
+            id: localId,
+            title: opts.title || '',
+            text: opts.text || '',
+            tags: opts.tags || [],
+            imageUrls,
+            date: opts.entryDateTimeLocal ? new Date(opts.entryDateTimeLocal).toISOString() : now,
+            createdAt: now,
+            characterCount: String(opts.text || '').length,
+            ...analysis,
+        };
+
+        const queueRecord = {
+            id: queueId,
+            userId: opts.userId,
+            title: opts.title || '',
+            entryDateTimeLocal: opts.entryDateTimeLocal || '',
+            text: opts.text || '',
+            tags: opts.tags || [],
+            images: (opts.images || []).map((im) => ({ url: im.url || '', dataUrl: im.dataUrl || '' })),
+            createdAt: now,
+        };
+
+        await queueOfflineCreateRecord(queueRecord);
+
+        let list = [];
+        try {
+            list = JSON.parse(localStorage.getItem(OFFLINE_ENTRIES_KEY) || '[]');
+            if (!Array.isArray(list)) list = [];
+        } catch {
+            list = [];
+        }
+        list.push(entry);
+        try {
+            localStorage.setItem(OFFLINE_ENTRIES_KEY, JSON.stringify(list));
+            if (opts.userId) {
+                localStorage.setItem(OFFLINE_ENTRIES_OWNER_KEY, String(opts.userId));
+            }
+        } catch (storageErr) {
+            const trimmed = list.slice(-40);
+            localStorage.setItem(OFFLINE_ENTRIES_KEY, JSON.stringify(trimmed));
+            if (opts.userId) localStorage.setItem(OFFLINE_ENTRIES_OWNER_KEY, String(opts.userId));
+            if (trimmed.length < list.length) {
+                throw new Error('Browser app storage is full. Remove photos or free space, then try again.');
+            }
+            throw storageErr;
+        }
+
+        return { entry, queueOk: true };
     }
 
     function readJsonStorage(key, fallbackValue) {
@@ -1990,23 +2149,17 @@ document.addEventListener('DOMContentLoaded', async function () {
         };
 
         const finishOfflineSaveFast = async () => {
-            if (!window.DiariOffline) {
-                throw new Error(
-                    'Offline save module did not load. Close the app completely, reopen on Wi‑Fi once, then try again.'
-                );
-            }
             let savedEntry;
-            if (typeof window.DiariOffline.saveEntryLocally === 'function') {
-                const result = await window.DiariOffline.saveEntryLocally(offlinePayloadOpts);
-                savedEntry = result.entry;
-            } else if (typeof window.DiariOffline.buildOfflineEntryPayloadSync === 'function') {
-                const payload = window.DiariOffline.buildOfflineEntryPayloadSync(offlinePayloadOpts);
-                const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
-                entries.push(payload.entry);
-                localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
-                savedEntry = payload.entry;
+            if (typeof window.DiariOffline?.saveEntryLocally === 'function') {
+                try {
+                    const result = await window.DiariOffline.saveEntryLocally(offlinePayloadOpts);
+                    savedEntry = result.entry;
+                } catch (moduleErr) {
+                    console.warn('[WriteEntry] DiariOffline.save failed, using built-in:', moduleErr);
+                    savedEntry = (await saveEntryOfflineBuiltin(offlinePayloadOpts)).entry;
+                }
             } else {
-                throw new Error('Offline save is outdated. Close the app and reopen on Wi‑Fi to update.');
+                savedEntry = (await saveEntryOfflineBuiltin(offlinePayloadOpts)).entry;
             }
             try {
                 await showOfflineAnalysisForEntry(savedEntry, true);
@@ -2027,18 +2180,16 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         if (saveOffline) {
             try {
-                const offlineReady = await ensureDiariOfflineLoaded();
-                if (!offlineReady) {
-                    throw new Error(
-                        'Offline save could not load. Close the app, open on Wi‑Fi once (wait for “Update”), then try offline again.'
-                    );
+                if (window.DiariMoodAnalysis) {
+                    try {
+                        await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
+                    } catch (_) {
+                        /* cached lottie or copy-only */
+                    }
+                    if (analysisOverlay && window.DiariMoodAnalysis.showAnalysisLoading) {
+                        window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
+                    }
                 }
-                try {
-                    await window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
-                } catch (_) {
-                    /* cached lottie or copy-only */
-                }
-                window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
                 await finishOfflineSaveFast();
             } catch (offlineErr) {
                 console.error('Offline save failed:', offlineErr);
@@ -2132,7 +2283,6 @@ document.addEventListener('DOMContentLoaded', async function () {
                 }
             } else {
             try {
-                await ensureDiariOfflineLoaded();
                 if (!window.DiariMoodAnalysis.showAnalysisLoading) {
                     window.DiariMoodAnalysis.showAnalysisLoading(analysisOverlay);
                 }

@@ -13,6 +13,8 @@
     const PENDING_ENTRIES_STORE = 'pendingEntries';
     const ENTRY_EDIT_MEDIA_DB = 'diariCoreOfflineEntryEditMedia';
     const ENTRY_EDIT_MEDIA_STORE = 'records';
+    /** Fallback when write-entry saves without IDB (same key as write-entry.js). */
+    const OFFLINE_CREATE_QUEUE_LS = 'diariCoreOfflineCreateQueue';
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -235,27 +237,60 @@
         });
     }
 
+    function readOfflineCreateQueueLs() {
+        try {
+            const arr = JSON.parse(global.localStorage.getItem(OFFLINE_CREATE_QUEUE_LS) || '[]');
+            return Array.isArray(arr) ? arr : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function writeOfflineCreateQueueLs(rows) {
+        global.localStorage.setItem(OFFLINE_CREATE_QUEUE_LS, JSON.stringify(rows));
+    }
+
     async function pendingEntriesGetAll() {
-        const db = await openPendingEntriesDb();
-        const rows = await new Promise((resolve, reject) => {
-            const tx = db.transaction(PENDING_ENTRIES_STORE, 'readonly');
-            const req = tx.objectStore(PENDING_ENTRIES_STORE).getAll();
-            req.onsuccess = () => resolve(req.result || []);
-            req.onerror = () => reject(req.error);
+        let rows = [];
+        try {
+            const db = await openPendingEntriesDb();
+            rows = await new Promise((resolve, reject) => {
+                const tx = db.transaction(PENDING_ENTRIES_STORE, 'readonly');
+                const req = tx.objectStore(PENDING_ENTRIES_STORE).getAll();
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+            db.close();
+        } catch (e) {
+            console.warn('[DiariOffline] IndexedDB pending read failed:', e);
+        }
+        const lsRows = readOfflineCreateQueueLs();
+        if (!lsRows.length) return rows;
+        const seen = new Set(rows.map((r) => r && r.id).filter(Boolean));
+        lsRows.forEach((r) => {
+            if (r && r.id && !seen.has(r.id)) {
+                rows.push(r);
+                seen.add(r.id);
+            }
         });
-        db.close();
         return rows;
     }
 
     async function pendingEntryDelete(id) {
-        const db = await openPendingEntriesDb();
-        await new Promise((resolve, reject) => {
-            const tx = db.transaction(PENDING_ENTRIES_STORE, 'readwrite');
-            tx.objectStore(PENDING_ENTRIES_STORE).delete(id);
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(tx.error);
-        });
-        db.close();
+        try {
+            const db = await openPendingEntriesDb();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(PENDING_ENTRIES_STORE, 'readwrite');
+                tx.objectStore(PENDING_ENTRIES_STORE).delete(id);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            db.close();
+        } catch (e) {
+            console.warn('[DiariOffline] IndexedDB pending delete failed:', e);
+        }
+        const ls = readOfflineCreateQueueLs().filter((r) => r && r.id !== id);
+        writeOfflineCreateQueueLs(ls);
     }
 
     async function queuePendingEntry(record) {

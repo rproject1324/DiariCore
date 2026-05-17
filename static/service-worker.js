@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v13';
+const CACHE_NAME = 'diaricore-pwa-v14';
 const ML_CACHE_PREFIX = 'diaricore-ml-';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
@@ -51,6 +51,8 @@ const PRECACHE_URLS = [
     '/mood-scoring.js',
     '/side-bar.js',
 ];
+
+const PRECACHE_URL_SET = new Set(PRECACHE_URLS);
 
 function isApiRequest(url) {
     return url.pathname.startsWith('/api/') || url.pathname.startsWith('/offline-ml/');
@@ -124,18 +126,31 @@ self.addEventListener('fetch', (event) => {
     if (!isStaticAsset(url)) return;
 
     event.respondWith(
-        caches.match(request).then((cached) => {
-            const network = fetch(request)
-                .then((res) => {
-                    if (res.ok) {
-                        const copy = res.clone();
-                        caches.open(CACHE_NAME).then((c) => c.put(request, copy));
-                    }
-                    return res;
-                })
-                .catch(() => cached);
+        (async () => {
+            let cached = await caches.match(request);
+            if (cached) return cached;
 
-            return cached || network;
-        })
+            const path = url.pathname;
+            if (PRECACHE_URL_SET.has(path)) {
+                cached = await caches.match(path);
+                if (cached) return cached;
+            }
+            const base = path.split('/').pop();
+            if (base) {
+                cached = await caches.match('/' + base);
+                if (cached) return cached;
+            }
+
+            try {
+                const res = await fetch(request);
+                if (res.ok) {
+                    const copy = res.clone();
+                    caches.open(CACHE_NAME).then((c) => c.put(request, copy));
+                }
+                return res;
+            } catch {
+                return cached || (await caches.match('/write-entry.html')) || Response.error();
+            }
+        })()
     );
 });
