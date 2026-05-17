@@ -1937,8 +1937,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             },
         });
 
-        const showOfflineAnalysisForEntry = async (savedEntry) => {
-            await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
+        const showOfflineAnalysisForEntry = async (savedEntry, skipAnalysisGate) => {
+            if (!skipAnalysisGate) {
+                await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
+            }
             const offlineFallback =
                 savedEntry.moodScoringOffline === true ||
                 savedEntry.engine === 'fallback' ||
@@ -1959,21 +1961,33 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
         };
 
-        const persistOfflinePayload = async (payload) => {
-            try {
-                await window.DiariOffline.queuePendingEntry(payload.queueRecord);
-            } catch (queueError) {
-                console.warn('Could not queue offline entry:', queueError);
-            }
-            const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
-            entries.push(payload.entry);
-            localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
-        };
-
         const finishOfflineSaveFast = async () => {
-            const payload = window.DiariOffline.buildOfflineEntryPayloadSync(offlinePayloadOpts);
-            await persistOfflinePayload(payload);
-            await showOfflineAnalysisForEntry(payload.entry);
+            let savedEntry;
+            if (typeof window.DiariOffline.saveEntryLocally === 'function') {
+                const result = await window.DiariOffline.saveEntryLocally(offlinePayloadOpts);
+                savedEntry = result.entry;
+            } else {
+                const payload = window.DiariOffline.buildOfflineEntryPayloadSync(offlinePayloadOpts);
+                const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
+                entries.push(payload.entry);
+                localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
+                savedEntry = payload.entry;
+            }
+            try {
+                await showOfflineAnalysisForEntry(savedEntry, true);
+            } catch (uiErr) {
+                console.warn('Offline analysis UI failed after save:', uiErr);
+                if (window.DiariMoodAnalysis.hideAnalysisOverlay) {
+                    window.DiariMoodAnalysis.hideAnalysisOverlay(analysisOverlay);
+                }
+                if (window.DiariToast) {
+                    window.DiariToast.show(
+                        'Entry saved offline. We will sync when you are back online.',
+                        'info',
+                        5000
+                    );
+                }
+            }
         };
 
         if (saveOffline && window.DiariOffline) {
@@ -1992,12 +2006,12 @@ document.addEventListener('DOMContentLoaded', async function () {
                 } else {
                     analysisOverlay.hidden = true;
                 }
+                const errMsg =
+                    offlineErr && offlineErr.message
+                        ? offlineErr.message
+                        : 'Could not save offline. Try again.';
                 if (window.DiariToast) {
-                    window.DiariToast.show(
-                        'Could not save offline. Free some storage or try again.',
-                        'warning',
-                        5000
-                    );
+                    window.DiariToast.show(errMsg, 'warning', 6000);
                 }
             } finally {
                 setSavingState(false);
@@ -2079,12 +2093,12 @@ document.addEventListener('DOMContentLoaded', async function () {
                 } else {
                     analysisOverlay.hidden = true;
                 }
+                const errMsg =
+                    recoveryErr && recoveryErr.message
+                        ? recoveryErr.message
+                        : 'Could not save offline. Try again.';
                 if (window.DiariToast) {
-                    window.DiariToast.show(
-                        'Could not save offline. Free some storage and try again.',
-                        'warning',
-                        5000
-                    );
+                    window.DiariToast.show(errMsg, 'warning', 6000);
                 }
             }
         } finally {

@@ -101,13 +101,86 @@
         }
     }
 
+    function stripDataUrlsFromEntry(entry) {
+        if (!entry || typeof entry !== 'object') return entry;
+        const imageUrls = (entry.imageUrls || []).map((u) => {
+            const s = String(u || '');
+            return s.startsWith('data:') ? '' : s;
+        }).filter(Boolean);
+        return { ...entry, imageUrls };
+    }
+
+    function stripEntriesListForStorage(entries) {
+        return (entries || []).map((e) => stripDataUrlsFromEntry(e));
+    }
+
+    function storageErrorMessage(err) {
+        const name = err && err.name ? String(err.name) : '';
+        if (name === 'QuotaExceededError') {
+            return 'Browser app storage is full (not your phone storage). We trimmed photos from cache — try again.';
+        }
+        return (err && err.message) || 'Could not write to browser storage';
+    }
+
     function writeEntriesCache(entries, userId) {
         try {
             global.localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries));
             if (userId) global.localStorage.setItem(ENTRIES_OWNER_KEY, String(userId));
+            return true;
         } catch (e) {
             console.warn('[DiariOffline] Failed to write entries cache:', e);
+            return false;
         }
+    }
+
+    /**
+     * Save a new entry locally for offline mode (PWA). Uses browser storage only — not phone disk directly.
+     */
+    async function saveEntryLocally({ userId, title, entryDateTimeLocal, text, tags, images }) {
+        const payload = buildOfflineEntryPayloadSync({
+            userId,
+            title,
+            entryDateTimeLocal,
+            text,
+            tags,
+            images,
+        });
+
+        const pendingImages = (images || []).filter((im) => im && (im.dataUrl || im.url));
+        const slimEntry = stripDataUrlsFromEntry(payload.entry);
+        if (pendingImages.length > 0) {
+            slimEntry.offlinePendingImages = pendingImages.length;
+        }
+
+        let queueOk = false;
+        try {
+            await queuePendingEntry(payload.queueRecord);
+            queueOk = true;
+        } catch (queueErr) {
+            console.warn('[DiariOffline] IndexedDB queue skipped:', queueErr);
+        }
+
+        let list = stripEntriesListForStorage(readEntriesCache());
+        list.push(slimEntry);
+
+        if (!writeEntriesCache(list, userId)) {
+            list = list.slice(-40);
+            list = stripEntriesListForStorage(list);
+            if (!writeEntriesCache(list, userId)) {
+                try {
+                    global.localStorage.setItem(ENTRIES_KEY, JSON.stringify([slimEntry]));
+                    if (userId) global.localStorage.setItem(ENTRIES_OWNER_KEY, String(userId));
+                } catch (retryErr) {
+                    throw new Error(storageErrorMessage(retryErr));
+                }
+            }
+        }
+
+        return {
+            entry: { ...payload.entry, ...slimEntry, id: slimEntry.id },
+            queueOk,
+            engine: payload.entry.engine || 'offline-local',
+        };
     }
 
     function mergeEntryIntoCache(entry, userId) {
@@ -661,6 +734,7 @@
         analyzeForOffline,
         buildOfflineEntryPayloadSync,
         buildOfflineEntryPayload,
+        saveEntryLocally,
         queuePendingEntry,
         flushPendingEntryCreates,
         flushPendingEntryEdits,
