@@ -605,7 +605,7 @@
                 </div>
                 ${
                     opts.offlineEstimate
-                        ? '<p class="mood-result-fallback-note">Offline estimate on this device — full AI analysis when you sync online.</p>'
+                        ? '<p class="mood-result-fallback-note">Temporary offline estimate — full analysis when you are back online.</p>'
                         : isFallback
                           ? '<p class="mood-result-fallback-note">Saved with fallback analysis</p>'
                           : ''

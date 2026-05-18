@@ -73,11 +73,9 @@
      * True when the entry should be saved locally (PWA airplane mode, offline events, or no network).
      */
     async function shouldSaveEntryOffline() {
+        if (!isPwaStandalone()) return false;
         if (!isOnline()) return true;
-        if (isPwaStandalone()) {
-            return !(await probeReachability());
-        }
-        return false;
+        return !(await probeReachability());
     }
 
     function getSessionUser() {
@@ -323,11 +321,6 @@
         return String(json.url);
     }
 
-    /**
-     * Lightweight local emotion estimate when the API is unreachable.
-     */
-    const OFFLINE_ONNX_PREPARE_MS = 120000;
-
     function formatOfflineAnalysis(result) {
         return {
             ...result,
@@ -337,54 +330,17 @@
     }
 
     /**
-     * Offline emotion analysis: use cached ONNX only if already loaded.
-     * Never blocks on a multi‑minute Hub download while offline.
+     * PWA offline: temporary local estimate until sync runs server analysis (Space).
      */
     async function analyzeForOffline(text) {
-        if (global.DiariEmotionOnnx) {
-            const heavyOk =
-                typeof global.DiariEmotionOnnx.canUseHeavyOnnx === 'function'
-                    ? global.DiariEmotionOnnx.canUseHeavyOnnx()
-                    : true;
-            if (!heavyOk) {
-                return { ...analyzeTextLocally(text), engine: 'offline-estimate' };
-            }
-            try {
-                const cached = await global.DiariEmotionOnnx.isModelCached();
-                if (cached) {
-                    const ensureFn =
-                        global.DiariEmotionOnnx.ensurePreparedForInference ||
-                        global.DiariEmotionOnnx.prepare;
-                    if (!global.DiariEmotionOnnx.isReady?.()) {
-                        await Promise.race([
-                            ensureFn.call(global.DiariEmotionOnnx),
-                            new Promise((_, reject) => {
-                                setTimeout(
-                                    () => reject(new Error('ONNX prepare timeout')),
-                                    OFFLINE_ONNX_PREPARE_MS
-                                );
-                            }),
-                        ]);
-                    }
-                    if (global.DiariEmotionOnnx.isReady?.()) {
-                        const result = await global.DiariEmotionOnnx.analyze(text);
-                        if (result && result.emotionLabel) {
-                            return formatOfflineAnalysis({
-                                ...result,
-                                engine: 'offline-onnx',
-                                moodScoringOffline: false,
-                            });
-                        }
-                    }
-                }
-            } catch (err) {
-                console.warn(
-                    '[DiariOffline] ONNX analyze unavailable, using heuristic:',
-                    err && err.message ? err.message : err
-                );
-            }
+        if (!isPwaStandalone()) {
+            return analyzeTextLocally(text);
         }
-        return analyzeTextLocally(text);
+        return {
+            ...analyzeTextLocally(text),
+            engine: 'offline-estimate',
+            pendingServerAnalysis: true,
+        };
     }
 
     /** Sync payload when async analysis must not block UI recovery. */
@@ -395,6 +351,7 @@
         return {
             queueRecord: {
                 id: `offline_entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                localEntryId: localId,
                 userId,
                 title: title || '',
                 entryDateTimeLocal: entryDateTimeLocal || '',
@@ -413,6 +370,8 @@
                 createdAt: now,
                 characterCount: String(text || '').length,
                 ...analysis,
+                engine: 'offline-estimate',
+                pendingServerAnalysis: true,
             },
         };
     }
@@ -453,7 +412,27 @@
             sentimentScore: confidence,
             all_probs,
             moodScoringOffline: true,
+            engine: 'offline-estimate',
+            pendingServerAnalysis: true,
         };
+    }
+
+    function entryNeedsServerReanalysis(entry) {
+        if (!entry) return false;
+        if (entry.pendingServerAnalysis === true) return true;
+        if (entry.moodScoringOffline === true) return true;
+        const engine = String(entry.engine || '').toLowerCase();
+        return (
+            engine === 'offline-estimate' ||
+            engine === 'offline-local' ||
+            engine === 'fallback'
+        );
+    }
+
+    function removeOfflineEntryByLocalId(localEntryId, userId) {
+        if (!localEntryId) return;
+        const list = readEntriesCache().filter((e) => String(e?.id) !== String(localEntryId));
+        writeEntriesCache(list, userId);
     }
 
     async function buildOfflineEntryPayload({ userId, title, entryDateTimeLocal, text, tags, images }) {
@@ -561,6 +540,9 @@
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok || !result?.success || !result?.entry) {
                     throw new Error(result?.error || 'Offline sync entry save failed');
+                }
+                if (item.localEntryId) {
+                    removeOfflineEntryByLocalId(item.localEntryId, userId);
                 }
                 mergeEntryIntoCache(result.entry, userId);
                 await pendingEntryDelete(item.id);
@@ -715,12 +697,47 @@
         global.localStorage.setItem(TAG_QUEUE_KEY, JSON.stringify(remaining));
     }
 
+    async function reanalyzeCachedFallbackEntries() {
+        if (!isOnline() || !isPwaStandalone()) return;
+        const userId = getUserId();
+        if (!userId) return;
+
+        const list = readEntriesCache();
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+
+        for (const entry of list) {
+            if (!entryNeedsServerReanalysis(entry)) continue;
+            const numericId = Number(entry.id);
+            if (!Number.isInteger(numericId) || numericId <= 0) continue;
+            try {
+                const res = await fetchFn(`/api/entries/${numericId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        userId,
+                        title: entry.title || '',
+                        text: entry.text || '',
+                        tags: entry.tags || [],
+                        reanalyze: true,
+                    }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (res.ok && json?.success && json?.entry) {
+                    mergeEntryIntoCache(json.entry, userId);
+                }
+            } catch (e) {
+                console.warn('[DiariOffline] Server reanalyze failed:', entry.id, e);
+            }
+        }
+    }
+
     async function syncAll() {
-        if (!isOnline()) return;
+        if (!isOnline() || !isPwaStandalone()) return;
         global.dispatchEvent(new CustomEvent('diari-offline-sync'));
         await flushPendingEntryCreates();
         await flushPendingEntryEdits();
         await flushTagSyncQueue();
+        await reanalyzeCachedFallbackEntries();
         await syncEntriesFromApi();
         global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
     }
@@ -740,6 +757,7 @@
     }
 
     function init() {
+        if (!isPwaStandalone()) return;
         guardOfflineAuth();
         global.addEventListener('online', () => {
             void syncAll();

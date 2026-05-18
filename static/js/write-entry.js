@@ -15,13 +15,6 @@ document.addEventListener('DOMContentLoaded', async function () {
         window.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
     }
 
-    if (
-        (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator.standalone) &&
-        window.DiariEmotionOnnx?.prepareInBackground
-    ) {
-        window.DiariEmotionOnnx.prepareInBackground();
-    }
-
     function normalizeTag(tag) {
         let t = String(tag || '').trim().replace(/\s+/g, ' ');
         if (window.DiariSecurity && typeof window.DiariSecurity.stripAngleBrackets === 'function') {
@@ -777,15 +770,14 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     async function shouldUseOfflineSave() {
+        if (!isPwaStandaloneApp()) return false;
         if (navigator.onLine === false) return true;
-        if (isPwaStandaloneApp()) {
-            const reachable = await probeLiveNetwork();
-            if (!reachable) return true;
-        }
+        const reachable = await probeLiveNetwork();
+        if (!reachable) return true;
         if (window.DiariOffline && typeof window.DiariOffline.shouldSaveEntryOffline === 'function') {
             return window.DiariOffline.shouldSaveEntryOffline();
         }
-        return navigator.onLine === false;
+        return false;
     }
 
     const OFFLINE_ENTRIES_KEY = 'diariCoreEntries';
@@ -831,54 +823,15 @@ document.addEventListener('DOMContentLoaded', async function () {
             sentimentScore: confidence,
             all_probs,
             moodScoringOffline: true,
-            engine: 'offline-local',
+            engine: 'offline-estimate',
+            pendingServerAnalysis: true,
         };
     }
 
+    /** PWA only: temporary estimate until server re-analyzes after sync. */
     async function analyzeForSaveOffline(text) {
-        const onnx = window.DiariEmotionOnnx;
-        const heavyOk = onnx?.canUseHeavyOnnx ? onnx.canUseHeavyOnnx() : false;
-        if (onnx && heavyOk && onnx.isReady?.()) {
-            try {
-                const result = await onnx.analyze(text);
-                if (result?.emotionLabel) {
-                    return {
-                        ...result,
-                        feeling: result.feeling || result.emotionLabel,
-                        moodScoringOffline: false,
-                        engine: 'offline-onnx',
-                    };
-                }
-            } catch (e) {
-                console.warn('[WriteEntry] Offline ONNX analyze failed:', e);
-            }
-        }
-        if (heavyOk && onnx && !onnx.isReady?.()) {
-            try {
-                const cached = await onnx.isModelCached();
-                if (cached && onnx.ensurePreparedForInference) {
-                    const ok = await onnx.ensurePreparedForInference();
-                    if (ok && onnx.isReady?.()) {
-                        const result = await onnx.analyze(text);
-                        if (result?.emotionLabel) {
-                            return {
-                                ...result,
-                                feeling: result.feeling || result.emotionLabel,
-                                moodScoringOffline: false,
-                                engine: 'offline-onnx',
-                            };
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('[WriteEntry] Offline ONNX prepare skipped:', e);
-            }
-        }
-        const estimate = analyzeTextLocallyBuiltin(text);
-        if (!heavyOk) {
-            estimate.engine = 'offline-estimate';
-        }
-        return estimate;
+        if (!isPwaStandaloneApp()) return null;
+        return analyzeTextLocallyBuiltin(text);
     }
 
     function readOfflineCreateQueueLs() {
@@ -932,8 +885,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
 
-    /** Saves offline without diari-offline.js (PWA script cache miss). */
+    /** PWA only: save locally when diari-offline.js did not load. */
     async function saveEntryOfflineBuiltin(opts) {
+        if (!isPwaStandaloneApp()) {
+            throw new Error('Offline save is only available in the installed app.');
+        }
         const analysis = await analyzeForSaveOffline(opts.text || '');
         const now = new Date().toISOString();
         const localId = `offline_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -956,6 +912,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         const queueRecord = {
             id: queueId,
+            localEntryId: localId,
             userId: opts.userId,
             title: opts.title || '',
             entryDateTimeLocal: opts.entryDateTimeLocal || '',
@@ -2122,7 +2079,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             fetchRerunAnalysis: async () => {
                 const t = journalText.value.trim();
                 if (!t) throw new Error('empty');
-                if (window.DiariOffline && !isOnlineNow()) {
+                if (isPwaStandaloneApp() && window.DiariOffline && !isOnlineNow()) {
                     const entry = await window.DiariOffline.analyzeForOffline(t);
                     return {
                         entry,
@@ -2155,12 +2112,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (!skipAnalysisGate) {
                 await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
             }
-            const isOfflineEstimate = savedEntry.engine === 'offline-estimate';
-            const offlineFallback =
-                isOfflineEstimate ||
-                savedEntry.engine === 'offline-local' ||
-                savedEntry.engine === 'fallback' ||
-                (savedEntry.moodScoringOffline === true && savedEntry.engine !== 'offline-onnx');
+            const isOfflineEstimate =
+                savedEntry.engine === 'offline-estimate' ||
+                savedEntry.pendingServerAnalysis === true ||
+                savedEntry.moodScoringOffline === true;
+            const offlineFallback = isOfflineEstimate || savedEntry.engine === 'fallback';
             window.DiariMoodAnalysis.showAnalysisResult(
                 analysisOverlay,
                 savedEntry,

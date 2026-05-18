@@ -165,23 +165,6 @@
                         </div>
                     </section>
 
-                    <div id="pwaOfflineModelStatus" class="pwa-offline-model-status" hidden aria-live="polite" aria-label="Offline emotion model download status">
-                        <div class="pwa-offline-model-status__inner">
-                            <p class="pwa-offline-model-status__title">Offline emotion model</p>
-                            <div class="pwa-offline-model-status__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                                <div class="pwa-offline-model-status__bar-fill"></div>
-                            </div>
-                            <div class="pwa-offline-model-status__meta">
-                                <span class="pwa-offline-model-status__pct">0%</span>
-                                <span class="pwa-offline-model-status__size"></span>
-                            </div>
-                            <p class="pwa-offline-model-status__hint"></p>
-                            <button type="button" class="pwa-offline-model-status__download-btn" id="pwaOfflineModelDownloadBtn" hidden>
-                                Download for offline use
-                            </button>
-                        </div>
-                    </div>
-
                     <div class="profile-page-logout profile-page-logout--desktop">
                         <button type="button" class="profile-page-logout__btn" id="profilePageLogoutBtn">
                             <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
@@ -777,14 +760,11 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="side-bar.js"></script>
     <script src="diari-security.js"></script>
-    <script src="diari-emotion-pipeline.js"></script>
-    <script src="diari-emotion-onnx.js"></script>
     <script src="diari-offline.js"></script>
     <script src="diari-shell.js"></script>
     <script src="lottie-web.min.js"></script>
     <script src="password-policy.js"></script>
     <script src="most-active-time.js"></script>
-    <script src="diari-pwa-offline-model-status.js"></script>
     <script src="profile.js"></script>
 </body>
 </html>
