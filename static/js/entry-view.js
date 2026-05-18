@@ -2114,6 +2114,24 @@
             { signal }
         );
 
+        function entrySaveFetchTimeoutMs() {
+            return isPwaOfflineContext() ? 45000 : 0;
+        }
+
+        async function fetchWithOptionalTimeout(url, options) {
+            const timeoutMs = entrySaveFetchTimeoutMs();
+            if (!timeoutMs) {
+                return fetch(url, options);
+            }
+            const ctrl = new AbortController();
+            const timer = global.setTimeout(() => ctrl.abort(), timeoutMs);
+            try {
+                return await fetch(url, { ...options, signal: ctrl.signal });
+            } finally {
+                global.clearTimeout(timer);
+            }
+        }
+
         async function patchRemote(reanalyze, imageUrlsList) {
             const payload = {
                 userId,
@@ -2126,7 +2144,7 @@
             if (!numericEntryId) {
                 throw new Error('Entry is not synced yet.');
             }
-            const res = await fetch(`/api/entries/${numericEntryId}`, {
+            const res = await fetchWithOptionalTimeout(`/api/entries/${numericEntryId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -2457,34 +2475,59 @@
                 if (!isDirty()) return;
 
                 const actOffline = await shouldSaveEntryAsOffline();
-                global.DiariMoodAnalysis.resetSession();
                 const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
-                if (actOffline) {
+
+                async function runPwaMetadataSaveWithOverlay() {
                     try {
                         await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
                     } catch (e) {
                         console.warn('Could not preload editing animation:', e);
                     }
                     global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
-                } else {
+                    const gatePromise = global.DiariMoodAnalysis.delayUntilEntryUpdateGate({
+                        requireSaveSignal: true,
+                    });
+                    let metadataSavedOk = false;
                     try {
-                        await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
-                    } catch (e) {
-                        console.warn('Could not preload editing animation:', e);
+                        metadataSavedOk = await runSave(false);
+                    } catch (err) {
+                        console.error(err);
+                        metadataSavedOk = false;
                     }
-                    global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
+                    if (typeof global.DiariMoodAnalysis.finishEntryUpdateLoading === 'function') {
+                        global.DiariMoodAnalysis.finishEntryUpdateLoading();
+                    }
+                    await gatePromise;
+                    return metadataSavedOk;
                 }
+
                 let metadataSavedOk = false;
-                try {
-                    const savePromise = runSave(false);
-                    await Promise.all([
-                        savePromise,
-                        global.DiariMoodAnalysis.delayUntilEntryUpdateGate(),
-                    ]);
-                    metadataSavedOk = await savePromise;
-                } finally {
-                    global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
+                if (isPwaOfflineContext()) {
+                    try {
+                        metadataSavedOk = await runPwaMetadataSaveWithOverlay();
+                    } finally {
+                        global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
+                    }
+                } else {
+                    global.DiariMoodAnalysis.resetSession();
+                    try {
+                        await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
+                    } catch (e) {
+                        console.warn('Could not preload editing animation:', e);
+                    }
+                    global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
+                    try {
+                        const savePromise = runSave(false);
+                        await Promise.all([
+                            savePromise,
+                            global.DiariMoodAnalysis.delayUntilEntryUpdateGate(),
+                        ]);
+                        metadataSavedOk = await savePromise;
+                    } finally {
+                        global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
+                    }
                 }
+
                 if (metadataSavedOk && afterMetadataSaveToEntries) {
                     afterMetadataSaveToEntries({ offlineSave: actOffline });
                 } else if (metadataSavedOk && actOffline) {

@@ -25,6 +25,7 @@
     let entryUpdateEditingAnim = null;
     let entryUpdateEditingPrimePromise = null;
     let entryUpdateEditingData = null;
+    let entryUpdateSaveFinished = false;
 
     function clearMoodAnalysisProgressTimer() {
         if (moodAnalysisProgressTimer != null) {
@@ -50,6 +51,11 @@
         moodAnalysisBookReadyAt = null;
         entryUpdateLoadingShownAt = 0;
         entryUpdateEditingReadyAt = null;
+        entryUpdateSaveFinished = false;
+    }
+
+    function finishEntryUpdateLoading() {
+        entryUpdateSaveFinished = true;
     }
 
     function getMoodAnalysisBookPool() {
@@ -400,9 +406,10 @@
         overlay.querySelector('.mood-analysis-card')?.classList.remove('mood-analysis-card--result');
         overlay.querySelector('.mood-analysis-card')?.classList.add('mood-analysis-card--analyzing');
 
-        footer.style.display = 'none';
+        if (footer) footer.style.display = 'none';
         overlay.hidden = false;
         entryUpdateLoadingShownAt = Date.now();
+        entryUpdateSaveFinished = false;
 
         const totalMs = ENTRY_UPDATE_TOTAL_MS;
         const progressStart = Date.now();
@@ -443,11 +450,45 @@
         await new Promise((resolve) => setTimeout(resolve, wait));
     }
 
-    async function delayUntilEntryUpdateGate() {
+    async function delayUntilEntryUpdateGate(options) {
         const shownAt = entryUpdateLoadingShownAt || Date.now();
         const barEnd = shownAt + ENTRY_UPDATE_TOTAL_MS;
-        const wait = Math.max(0, barEnd - Date.now());
-        await new Promise((resolve) => setTimeout(resolve, wait));
+        const requireSaveSignal = Boolean(options && options.requireSaveSignal);
+
+        if (!requireSaveSignal) {
+            const wait = Math.max(0, barEnd - Date.now());
+            await new Promise((resolve) => global.setTimeout(resolve, wait));
+            return;
+        }
+
+        const minEnd = shownAt + 500;
+        const hardCap = shownAt + ENTRY_UPDATE_TOTAL_MS + 2500;
+
+        await new Promise((resolve) => {
+            const done = () => resolve();
+            const tick = () => {
+                const now = Date.now();
+                if (now >= hardCap) {
+                    done();
+                    return true;
+                }
+                const barDone = now >= barEnd;
+                const minDone = now >= minEnd;
+                if (barDone && minDone && entryUpdateSaveFinished) {
+                    done();
+                    return true;
+                }
+                return false;
+            };
+            if (tick()) return;
+            const iv = global.setInterval(() => {
+                if (tick()) global.clearInterval(iv);
+            }, 40);
+            global.setTimeout(() => {
+                global.clearInterval(iv);
+                done();
+            }, Math.max(0, hardCap - Date.now()));
+        });
     }
 
     function computeEnergy(score) {
@@ -658,6 +699,7 @@
         showEntryUpdateLoading,
         delayUntilMoodAnalysisGate,
         delayUntilEntryUpdateGate,
+        finishEntryUpdateLoading,
         hideAnalysisOverlay,
         showAnalysisResult,
         parkMoodAnalysisBookMount,
