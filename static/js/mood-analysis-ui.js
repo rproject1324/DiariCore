@@ -10,7 +10,8 @@
     const MOOD_ANALYSIS_BOOK_LOTTIE_SRC = '/noto-emoji/book.json?v=20260517b';
     const ENTRY_UPDATE_EDITING_LOTTIE_SRC = '/noto-emoji/pencil_write.json?v=20260513d';
     const ENTRY_UPDATE_TOTAL_MS = 4200;
-    const ENTRY_UPDATE_TOTAL_MS_PWA = 900;
+    /** Minimum time the PWA update overlay stays visible (offline saves are instant). */
+    const ENTRY_UPDATE_PWA_MIN_MS = 1200;
     const ENTRY_UPDATE_MIN_AFTER_EDITING_MS = 700;
 
     let moodAnalysisLoadingShownAt = 0;
@@ -29,6 +30,7 @@
     let entryUpdateSaveFinished = false;
     let entryUpdateProgressTotalMs = ENTRY_UPDATE_TOTAL_MS;
     let entryUpdateProgressSnap = null;
+    let entryUpdateProgressRefs = null;
 
     function clearMoodAnalysisProgressTimer() {
         if (moodAnalysisProgressTimer != null) {
@@ -67,6 +69,74 @@
     function finishEntryUpdateLoading() {
         entryUpdateSaveFinished = true;
         snapEntryUpdateProgressToComplete();
+    }
+
+    function setEntryUpdateProgressPct(pct) {
+        if (!entryUpdateProgressRefs) return;
+        const p = Math.max(0, Math.min(100, Math.round(pct)));
+        entryUpdateProgressRefs.progressPct.textContent = `${p}%`;
+        entryUpdateProgressRefs.progressWrap.setAttribute('aria-valuenow', String(p));
+        entryUpdateProgressRefs.progressFill.style.width = `${p}%`;
+    }
+
+    function stopEntryUpdateProgressSync() {
+        entryUpdateProgressRefs = null;
+        clearMoodAnalysisProgressTimer();
+    }
+
+    /**
+     * PWA only: progress reaches 100% when save finishes; overlay proceeds immediately after (no extra timer wait).
+     */
+    async function runEntryUpdateLoadingWithSave(saveFn, overlay, options) {
+        const ov = overlay || ensureAnalysisOverlay();
+        const minMs =
+            options && typeof options.minDurationMs === 'number'
+                ? options.minDurationMs
+                : ENTRY_UPDATE_PWA_MIN_MS;
+
+        try {
+            await primeEntryUpdateEditingLottie();
+        } catch (_) {
+            /* ignore */
+        }
+
+        showEntryUpdateLoading(ov, { pwaSyncSave: true });
+        const start = Date.now();
+        let saveOk = false;
+        let settled = false;
+
+        const savePromise = Promise.resolve()
+            .then(() => saveFn())
+            .then((ok) => {
+                saveOk = Boolean(ok);
+                return saveOk;
+            })
+            .catch((err) => {
+                console.error(err);
+                saveOk = false;
+                return false;
+            })
+            .finally(() => {
+                settled = true;
+            });
+
+        while (true) {
+            const elapsed = Date.now() - start;
+            if (settled) {
+                setEntryUpdateProgressPct(100);
+                const remain = Math.max(0, minMs - elapsed);
+                if (remain > 0) {
+                    await new Promise((resolve) => global.setTimeout(resolve, remain));
+                }
+                break;
+            }
+            const pct = Math.min(90, (elapsed / 2400) * 90);
+            setEntryUpdateProgressPct(pct);
+            await new Promise((resolve) => global.setTimeout(resolve, 40));
+        }
+
+        await savePromise;
+        return saveOk;
     }
 
     function getMoodAnalysisBookPool() {
@@ -421,9 +491,20 @@
         overlay.hidden = false;
         entryUpdateLoadingShownAt = Date.now();
         entryUpdateSaveFinished = false;
-        entryUpdateProgressTotalMs =
-            options && options.pwaFast ? ENTRY_UPDATE_TOTAL_MS_PWA : ENTRY_UPDATE_TOTAL_MS;
+        entryUpdateProgressRefs = { progressPct, progressFill, progressWrap };
 
+        if (options && options.pwaSyncSave) {
+            progressFill.style.transition = 'width 120ms ease-out';
+            progressFill.style.width = '0%';
+            try {
+                if (entryUpdateEditingAnim && typeof entryUpdateEditingAnim.resize === 'function') {
+                    entryUpdateEditingAnim.resize();
+                }
+            } catch (_) {}
+            return;
+        }
+
+        entryUpdateProgressTotalMs = ENTRY_UPDATE_TOTAL_MS;
         const totalMs = entryUpdateProgressTotalMs;
         const progressStart = Date.now();
         entryUpdateProgressSnap = () => {
@@ -726,6 +807,7 @@
         delayUntilMoodAnalysisGate,
         delayUntilEntryUpdateGate,
         finishEntryUpdateLoading,
+        runEntryUpdateLoadingWithSave,
         hideAnalysisOverlay,
         showAnalysisResult,
         parkMoodAnalysisBookMount,

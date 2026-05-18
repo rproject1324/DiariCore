@@ -2477,30 +2477,18 @@
                 const actOffline = await shouldSaveEntryAsOffline();
                 const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
 
-                async function runPwaMetadataSaveWithOverlay() {
-                    try {
-                        await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
-                    } catch (e) {
-                        console.warn('Could not preload editing animation:', e);
-                    }
-                    global.DiariMoodAnalysis.showEntryUpdateLoading(overlay, { pwaFast: true });
-                    let metadataSavedOk = false;
-                    try {
-                        metadataSavedOk = await runSave(false);
-                    } catch (err) {
-                        console.error(err);
-                        metadataSavedOk = false;
-                    }
-                    if (typeof global.DiariMoodAnalysis.finishEntryUpdateLoading === 'function') {
-                        global.DiariMoodAnalysis.finishEntryUpdateLoading();
-                    }
-                    return metadataSavedOk;
-                }
-
                 let metadataSavedOk = false;
                 if (isPwaOfflineContext()) {
                     try {
-                        metadataSavedOk = await runPwaMetadataSaveWithOverlay();
+                        if (typeof global.DiariMoodAnalysis.runEntryUpdateLoadingWithSave === 'function') {
+                            metadataSavedOk = await global.DiariMoodAnalysis.runEntryUpdateLoadingWithSave(
+                                () => runSave(false),
+                                overlay
+                            );
+                        } else {
+                            global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
+                            metadataSavedOk = await runSave(false);
+                        }
                     } finally {
                         global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
                     }
