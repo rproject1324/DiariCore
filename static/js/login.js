@@ -1049,18 +1049,56 @@ document.addEventListener('DOMContentLoaded', function() {
         if (window.DiariSecurity && loginPayload && loginPayload.csrfToken) {
             window.DiariSecurity.setCsrfToken(loginPayload.csrfToken);
         }
-        /* Theme/palette apply on the destination app page — not on login (avoids flash before redirect). */
-        if (u.isAdmin) {
-            showNotification('Admin login successful! Redirecting...', 'success');
-            setTimeout(function () {
+
+        function goAfterLoginHydrate() {
+            if (u.isAdmin) {
+                showNotification('Admin login successful! Redirecting...', 'success');
                 window.location.href = 'admin';
-            }, 500);
-            return;
-        }
-        showNotification('Login successful! Redirecting...', 'success');
-        setTimeout(function () {
+                return;
+            }
+            showNotification('Login successful! Redirecting...', 'success');
             window.location.href = 'dashboard.html';
-        }, 900);
+        }
+
+        fetch('/api/sync/state?_=' + Date.now(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        })
+            .then(function (res) {
+                return res.json().then(function (data) {
+                    return { ok: res.ok, data: data };
+                });
+            })
+            .then(function (ref) {
+                const data = ref.data || {};
+                if (ref.ok && data.success) {
+                    if (Array.isArray(data.entries)) {
+                        localStorage.setItem('diariCoreEntries', JSON.stringify(data.entries));
+                        const uid = data.user?.id ?? sessionUser.id;
+                        if (uid) {
+                            localStorage.setItem('diariCoreEntriesOwnerId', String(uid));
+                        }
+                    }
+                    if (data.user) {
+                        const merged = Object.assign({}, sessionUser, data.user, {
+                            isLoggedIn: true,
+                            loginTime: sessionUser.loginTime,
+                        });
+                        localStorage.setItem('diariCoreUser', JSON.stringify(merged));
+                    }
+                    if (data.syncRevision) {
+                        localStorage.setItem('diariCoreSyncRevision', String(data.syncRevision));
+                    }
+                }
+            })
+            .catch(function () {
+                /* redirect anyway; app page will pull again */
+            })
+            .finally(function () {
+                setTimeout(goAfterLoginHydrate, u.isAdmin ? 400 : 700);
+            });
     }
     
     function clearSignInValidation() {

@@ -6,6 +6,7 @@ Deploy on Railway with PostgreSQL (DATABASE_URL). Local dev uses SQLite.
 import hashlib
 import os
 import json
+import time
 import uuid
 import random
 import secrets
@@ -1053,14 +1054,12 @@ def api_user_me():
 
 def _compute_sync_revision(user_id: int, user_row: dict, entry_rows: list) -> str:
     """Changes whenever profile, theme, or any entry is created/updated/deleted."""
-    latest_entry = ""
-    for r in entry_rows or []:
-        stamp = r.get("updated_at") or r.get("created_at")
-        if stamp is None:
-            continue
-        s = str(stamp)
-        if s > latest_entry:
-            latest_entry = s
+    entry_bits = []
+    for r in sorted(entry_rows or [], key=lambda x: int(x.get("id") or 0)):
+        entry_bits.append(
+            f"{r.get('id')}:{r.get('updated_at') or r.get('created_at') or ''}"
+        )
+    entries_fp = hashlib.sha256("|".join(entry_bits).encode("utf-8", errors="ignore")).hexdigest()[:20]
     profile_bits = "|".join(
         str(user_row.get(k) or "")
         for k in (
@@ -1077,7 +1076,7 @@ def _compute_sync_revision(user_id: int, user_row: dict, entry_rows: list) -> st
     if isinstance(av, str) and av:
         profile_bits += "|" + hashlib.sha256(av.encode("utf-8", errors="ignore")).hexdigest()[:24]
     profile_hash = hashlib.sha256(profile_bits.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return f"{user_id}:{len(entry_rows or [])}:{latest_entry}:{profile_hash}"
+    return f"{user_id}:{len(entry_rows or [])}:{entries_fp}:{profile_hash}"
 
 
 @app.route("/api/sync/check", methods=["GET"])
@@ -1125,6 +1124,52 @@ def api_sync_state():
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     return resp, 200
+
+
+@app.route("/api/sync/stream", methods=["GET"])
+def api_sync_stream():
+    """Server-sent events: notifies browsers when DB revision changes (live cross-device sync)."""
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
+    if auth_err:
+        return auth_err
+
+    def generate():
+        last_rev = None
+        heartbeats = 0
+        while True:
+            row = db.get_user_by_id(user_id)
+            if not row:
+                yield 'event: error\ndata: {"error":"not_found"}\n\n'
+                break
+            rows = db.get_journal_entries_by_user(user_id)
+            rev = _compute_sync_revision(user_id, row, rows)
+            if rev != last_rev:
+                last_rev = rev
+                heartbeats = 0
+                payload = json.dumps(
+                    {
+                        "syncRevision": rev,
+                        "serverTime": datetime.now(timezone.utc).isoformat(),
+                        "entriesCount": len(rows),
+                    }
+                )
+                yield f"data: {payload}\n\n"
+            else:
+                heartbeats += 1
+                if heartbeats >= 8:
+                    heartbeats = 0
+                    yield ": ping\n\n"
+            time.sleep(2)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/api/user/avatar", methods=["POST"])

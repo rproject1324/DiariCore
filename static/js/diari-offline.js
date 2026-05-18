@@ -146,13 +146,14 @@
         return (err && err.message) || 'Could not write to browser storage';
     }
 
-    function writeEntriesCache(entries, userId) {
+    function writeEntriesCache(entries, userId, options) {
         try {
             const nextJson = JSON.stringify(entries);
             const prevJson = global.localStorage.getItem(ENTRIES_KEY);
             global.localStorage.setItem(ENTRIES_KEY, nextJson);
             if (userId) global.localStorage.setItem(ENTRIES_OWNER_KEY, String(userId));
-            if (prevJson !== nextJson) {
+            const forceNotify = options && options.forceNotify === true;
+            if (forceNotify || prevJson !== nextJson) {
                 try {
                     global.dispatchEvent(new CustomEvent('diari-entries-cache-updated'));
                 } catch (_) {
@@ -212,7 +213,7 @@
         } catch (_) {
             /* ignore */
         }
-        if (changed) {
+        if (changed || forceRemote) {
             try {
                 global.dispatchEvent(new CustomEvent('diari-user-updated', { bubbles: true }));
             } catch (_) {
@@ -738,7 +739,7 @@
         sanitizeEntriesCachePwaFlags();
         const server = Array.isArray(serverEntries) ? serverEntries : [];
         if (!isPwaUiContext()) {
-            writeEntriesCache(server, userId);
+            writeEntriesCache(server, userId, { forceNotify: true });
             return server;
         }
 
@@ -789,7 +790,7 @@
             const tb = new Date(b?.date || b?.createdAt || 0).getTime();
             return tb - ta;
         });
-        writeEntriesCache(merged, userId);
+        writeEntriesCache(merged, userId, { forceNotify: true });
         return merged;
     }
 
@@ -1842,8 +1843,10 @@
     let remoteStateWatchStarted = false;
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
-    const LIVE_REMOTE_SYNC_MS = 2500;
+    const LIVE_REMOTE_SYNC_MS = 3000;
     let remotePullPromise = null;
+    let syncEventSource = null;
+    let syncEventSourceRetries = 0;
     let pwaLastReachable = null;
 
     function currentAppPageName() {
@@ -1887,6 +1890,13 @@
             }
             if (!res.ok || !data.success) {
                 return { ok: false, reason: 'api-error', status: res.status };
+            }
+
+            const sessionUid = getUserId();
+            const serverUid = Number(data.user?.id ?? data.user?.userId ?? 0);
+            if (serverUid > 0 && sessionUid > 0 && serverUid !== sessionUid) {
+                console.warn('[DiariOffline] Session user mismatch; signing out.');
+                return { ok: false, authExpired: true };
             }
 
             if (data.user) {
@@ -1978,25 +1988,12 @@
         if (!getUserId()) return { ok: false, reason: 'anon' };
         syncPageLoadPromise = null;
 
-        if (remotePullPromise && options.force !== true) {
+        if (remotePullPromise) {
             return remotePullPromise;
         }
 
         remotePullPromise = (async () => {
             await runPrePullFlush();
-
-            if (options.force !== true) {
-                const check = await hasRemoteRevisionChanged();
-                if (check.authExpired) {
-                    const expired = { ok: false, authExpired: true };
-                    handleAuthExpiredFromSync(expired);
-                    return expired;
-                }
-                if (!check.changed) {
-                    return { ok: true, unchanged: true };
-                }
-            }
-
             const result = await pullFromServerHard();
             handleAuthExpiredFromSync(result);
             return result;
@@ -2032,19 +2029,70 @@
         return pullRemoteStateForRefresh({ force: true });
     }
 
+    function stopSyncEventStream() {
+        if (!syncEventSource) return;
+        try {
+            syncEventSource.close();
+        } catch (_) {
+            /* ignore */
+        }
+        syncEventSource = null;
+    }
+
+    function startSyncEventStream() {
+        if (syncEventSource || typeof EventSource === 'undefined') return;
+        if (!getUserId() || !isAuthenticatedAppPage()) return;
+
+        const url = '/api/sync/stream?_=' + Date.now();
+        try {
+            syncEventSource = new EventSource(url);
+        } catch (e) {
+            console.warn('[DiariOffline] EventSource failed:', e);
+            return;
+        }
+
+        syncEventSource.onopen = () => {
+            syncEventSourceRetries = 0;
+        };
+
+        syncEventSource.onmessage = (ev) => {
+            if (!ev || !ev.data) return;
+            void pullRemoteStateForRefresh({ force: true });
+        };
+
+        syncEventSource.onerror = () => {
+            stopSyncEventStream();
+            syncEventSourceRetries += 1;
+            const delay = Math.min(15000, 1500 * syncEventSourceRetries);
+            global.setTimeout(() => {
+                if (getUserId() > 0 && isAuthenticatedAppPage()) {
+                    startSyncEventStream();
+                }
+            }, delay);
+        };
+    }
+
     function startLiveRemoteSync() {
         if (liveRemoteSyncStarted) return;
         liveRemoteSyncStarted = true;
 
+        startSyncEventStream();
+
         const tick = () => {
             if (!isAuthenticatedAppPage()) return;
             if (document.visibilityState === 'hidden') return;
-            void pullRemoteStateForRefresh();
+            void pullRemoteStateForRefresh({ force: true });
         };
 
+        tick();
         liveRemoteSyncTimer = global.setInterval(tick, LIVE_REMOTE_SYNC_MS);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') tick();
+            if (document.visibilityState === 'visible') {
+                startSyncEventStream();
+                tick();
+            } else {
+                stopSyncEventStream();
+            }
         });
     }
 
@@ -2141,6 +2189,12 @@
         startLiveRemoteSync();
     }
 
+    async function hydrateLocalCacheFromServer() {
+        const result = await pullFromServerHard();
+        handleAuthExpiredFromSync(result);
+        return result;
+    }
+
     function init() {
         ensurePwaDocumentMarkers();
         if (isPwaUiContext()) {
@@ -2183,6 +2237,7 @@
         syncAllForPageLoad,
         pullRemoteStateForRefresh,
         pullFromServerHard,
+        hydrateLocalCacheFromServer,
         awaitServerState,
         registerPageRefreshHandler,
         mergeServerUserIntoLocal,

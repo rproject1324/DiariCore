@@ -2601,6 +2601,19 @@
         }
     });
 
+    window.addEventListener('diari-remote-state-refreshed', () => {
+        if (!document.body.classList.contains('page-entry-view')) return;
+        const id = parseQueryId();
+        const uid = getUserId();
+        if (!id || !uid || !global.DiariEntryDetail?.mount) return;
+        void global.DiariEntryDetail.mount({
+            entryId: id,
+            onLeavePanel: () => {
+                window.location.href = 'entries.html';
+            },
+        });
+    });
+
     window.addEventListener('pageshow', () => {
         if (!document.body.classList.contains('page-entry-view')) return;
         if (navigator.onLine === false) return;
