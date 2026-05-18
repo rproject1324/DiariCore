@@ -1317,8 +1317,13 @@ document.addEventListener('DOMContentLoaded', async function () {
         flushTagSyncQueue();
         syncUserTagsIntoUI();
         flushOfflineEntryQueue();
-        if (window.DiariOffline?.requestPwaSync) void window.DiariOffline.requestPwaSync();
-        else if (window.DiariOffline?.syncAll) void window.DiariOffline.syncAll();
+        if (window.DiariOffline?.isPwaUiContext?.()) {
+            if (window.DiariOffline.requestPwaSync) {
+                void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
+            } else if (window.DiariOffline.syncAll) {
+                void window.DiariOffline.syncAll({ trustNavigatorOnline: true });
+            }
+        }
     });
     window.addEventListener('diari-offline-sync', () => {
         flushTagSyncQueue();

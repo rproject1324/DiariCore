@@ -102,6 +102,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     } catch (_) {}
 
     await syncEntriesFromApi();
+    if (isPwaOfflineEntriesUi()) entriesPwaInitialSyncDone = true;
     initializeEntriesFromStorage();
     await syncEntriesFilterTagsFromApi();
     initializeFilterDropdown();
@@ -111,20 +112,22 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeEntriesResizeEmptyState();
     openEntriesDetailFromQuery();
 
-    window.addEventListener('diari-offline-sync-complete', () => {
-        initializeEntriesFromStorage({ preserveNavigation: true });
-    });
-    window.addEventListener('online', () => {
-        void runPwaEntriesSyncNow();
-    });
-    window.addEventListener('pageshow', () => {
-        void runPwaEntriesSyncNow();
-    });
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
+    if (isPwaOfflineEntriesUi()) {
+        window.addEventListener('diari-offline-sync-complete', () => {
+            initializeEntriesFromStorage({ preserveNavigation: true });
+        });
+        window.addEventListener('online', () => {
             void runPwaEntriesSyncNow();
-        }
-    });
+        });
+        window.addEventListener('pageshow', () => {
+            if (entriesPwaInitialSyncDone) void runPwaEntriesSyncNow();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && entriesPwaInitialSyncDone) {
+                void runPwaEntriesSyncNow();
+            }
+        });
+    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();
@@ -139,35 +142,39 @@ async function syncEntriesFromApi() {
         }
         return;
     }
-    const runSync =
-        typeof window.DiariOffline?.requestPwaSync === 'function'
-            ? () => window.DiariOffline.requestPwaSync()
-            : typeof window.DiariOffline?.syncAll === 'function'
-              ? () => window.DiariOffline.syncAll()
-              : null;
-    if (!runSync) {
+    if (typeof window.DiariOffline?.syncAll !== 'function') {
         if (window.DiariOffline?.syncEntriesFromApi) {
             await window.DiariOffline.syncEntriesFromApi();
         }
         return;
     }
-    for (let attempt = 0; attempt < 5; attempt++) {
-        const result = await runSync();
-        const pending =
-            typeof window.DiariOffline.hasPendingOfflineWork === 'function' &&
-            window.DiariOffline.hasPendingOfflineWork();
-        if (result?.ok || (!pending && navigator.onLine !== false)) break;
+
+    const syncOpts = { trustNavigatorOnline: true };
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+        const result = await window.DiariOffline.syncAll(syncOpts);
+        let pending = false;
+        if (typeof window.DiariOffline.hasPendingOfflineWorkAsync === 'function') {
+            pending = await window.DiariOffline.hasPendingOfflineWorkAsync();
+        } else if (typeof window.DiariOffline.hasPendingOfflineWork === 'function') {
+            pending = window.DiariOffline.hasPendingOfflineWork();
+        }
+        if (result?.ok && !pending) break;
+        if (!pending && navigator.onLine !== false) break;
         if (navigator.onLine === false) break;
-        if (attempt < 4) {
-            await new Promise((r) => window.setTimeout(r, 600 * (attempt + 1)));
+        if (attempt < 3) {
+            await new Promise((r) => window.setTimeout(r, 900 * (attempt + 1)));
         }
     }
 }
+
+let entriesPwaInitialSyncDone = false;
 
 async function runPwaEntriesSyncNow() {
     if (!isPwaOfflineEntriesUi() || navigator.onLine === false) return;
     await syncEntriesFromApi();
     initializeEntriesFromStorage({ preserveNavigation: true });
+    entriesPwaInitialSyncDone = true;
 }
 
 function monthKeyFromDate(d) {

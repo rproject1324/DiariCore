@@ -433,8 +433,8 @@ class SidebarComponent {
 
         window.addEventListener('online', () => {
             this.refreshSyncStatusBadge();
-            if (window.DiariOffline?.requestPwaSync) {
-                void window.DiariOffline.requestPwaSync();
+            if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.requestPwaSync) {
+                void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
             }
         });
         window.addEventListener('offline', () => this.refreshSyncStatusBadge());

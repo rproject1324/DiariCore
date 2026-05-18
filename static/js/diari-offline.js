@@ -51,23 +51,38 @@
      */
     async function probeReachability() {
         if (!isOnline()) return false;
-        try {
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        const probeOpts = {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        };
+
+        async function tryUrl(url) {
             const ctrl = new AbortController();
-            const timer = global.setTimeout(() => ctrl.abort(), 4500);
-            const res = await fetch('/api/health?dcReach=' + Date.now(), {
-                method: 'GET',
-                cache: 'no-store',
-                credentials: 'same-origin',
-                signal: ctrl.signal,
-                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
-            });
-            global.clearTimeout(timer);
-            if (!res.ok) return false;
-            const data = await res.json().catch(() => ({}));
-            return data && data.ok === true;
-        } catch {
-            return false;
+            const timer = global.setTimeout(() => ctrl.abort(), 8000);
+            try {
+                const res = await fetchFn(url, { ...probeOpts, signal: ctrl.signal });
+                global.clearTimeout(timer);
+                if (!res.ok) return false;
+                if (url.includes('/api/health')) {
+                    const data = await res.json().catch(() => ({}));
+                    return data && data.ok === true;
+                }
+                return true;
+            } catch {
+                global.clearTimeout(timer);
+                return false;
+            }
         }
+
+        if (await tryUrl('/api/health?dcReach=' + Date.now())) return true;
+        const userId = getUserId();
+        if (userId && (await tryUrl('/api/entries?dcReach=' + Date.now() + '&userId=' + encodeURIComponent(String(userId))))) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -779,7 +794,7 @@
         };
     }
 
-    async function syncEntriesFromApi() {
+    async function syncEntriesFromApi(options = {}) {
         const userId = getUserId();
         if (!userId) {
             global.localStorage.setItem(ENTRIES_KEY, '[]');
@@ -792,9 +807,16 @@
             global.localStorage.setItem(ENTRIES_KEY, '[]');
         }
 
+        const skipProbe = options.skipReachabilityProbe === true;
+        const trustNav = options.trustNavigatorOnline === true;
+
         let reachable = false;
         if (isOnline()) {
-            reachable = isPwaUiContext() ? await probeReachability() : true;
+            if (skipProbe || trustNav) {
+                reachable = true;
+            } else {
+                reachable = isPwaUiContext() ? await probeReachability() : true;
+            }
         }
         if (!reachable) {
             return { ok: true, offline: true, entries: readEntriesCache(), fromCache: true };
@@ -935,16 +957,27 @@
     }
 
     let syncAllPromise = null;
-    let syncKickTimer = null;
 
-    async function syncAll() {
+    async function syncAll(options = {}) {
         if (!isPwaUiContext()) return { ok: false, reason: 'not-pwa' };
         if (!isOnline()) return { ok: false, reason: 'offline' };
 
         if (syncAllPromise) return syncAllPromise;
 
+        const opts = options || {};
+
         syncAllPromise = (async () => {
-            const reachable = await waitForReachability();
+            const trustNav = opts.trustNavigatorOnline === true;
+            let reachable = true;
+
+            if (!trustNav) {
+                reachable = await waitForReachability();
+                if (!reachable && isOnline() && (await hasPendingOfflineWorkAsync())) {
+                    console.warn('[DiariOffline] Reachability probe failed; flushing pending PWA work anyway.');
+                    reachable = true;
+                }
+            }
+
             if (!reachable) {
                 return { ok: false, reason: 'unreachable' };
             }
@@ -955,7 +988,10 @@
             await flushPendingEntryDeletes();
             await flushTagSyncQueue();
             await reanalyzeCachedFallbackEntries();
-            await syncEntriesFromApi();
+            await syncEntriesFromApi({
+                skipReachabilityProbe: true,
+                trustNavigatorOnline: trustNav,
+            });
             global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
             return { ok: true };
         })()
@@ -970,15 +1006,9 @@
         return syncAllPromise;
     }
 
-    function requestPwaSync() {
+    function requestPwaSync(options = {}) {
         if (!isPwaUiContext()) return Promise.resolve({ ok: false, reason: 'not-pwa' });
-        if (syncKickTimer) global.clearTimeout(syncKickTimer);
-        return new Promise((resolve) => {
-            syncKickTimer = global.setTimeout(() => {
-                syncKickTimer = null;
-                void syncAll().then(resolve);
-            }, 80);
-        });
+        return syncAll(options);
     }
 
     async function flushPendingEntryEdits() {
@@ -1155,27 +1185,35 @@
         return readEntriesCache().some((e) => isOfflineLocalEntry(e));
     }
 
+    async function hasPendingOfflineWorkAsync() {
+        if (hasPendingOfflineWork()) return true;
+        try {
+            const pending = await pendingEntriesGetAll();
+            return pending.length > 0;
+        } catch {
+            return hasPendingOfflineWork();
+        }
+    }
+
     let connectivityWatchStarted = false;
 
     function startPwaConnectivityWatch() {
         if (connectivityWatchStarted || !isPwaUiContext()) return;
         connectivityWatchStarted = true;
 
-        global.addEventListener('online', () => {
-            void requestPwaSync();
-        });
+        const kickSync = () => void requestPwaSync({ trustNavigatorOnline: true });
+
+        global.addEventListener('online', kickSync);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                void requestPwaSync();
-            }
+            if (document.visibilityState === 'visible') kickSync();
         });
-        global.addEventListener('pageshow', () => {
-            void requestPwaSync();
-        });
+        global.addEventListener('pageshow', kickSync);
 
         global.setInterval(() => {
-            if (!isOnline() || !hasPendingOfflineWork()) return;
-            void requestPwaSync();
+            if (!isOnline()) return;
+            void hasPendingOfflineWorkAsync().then((pending) => {
+                if (pending) kickSync();
+            });
         }, 10000);
     }
 
@@ -1198,7 +1236,7 @@
         guardOfflineAuth();
         startPwaConnectivityWatch();
         if (isOnline()) {
-            void requestPwaSync();
+            void requestPwaSync({ trustNavigatorOnline: true });
         }
     }
 
@@ -1207,6 +1245,7 @@
         isPwaStandalone,
         isPwaUiContext,
         hasPendingOfflineWork,
+        hasPendingOfflineWorkAsync,
         probeReachability,
         shouldActOffline,
         shouldSaveEntryOffline,

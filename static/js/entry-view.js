@@ -2265,7 +2265,7 @@
 
         const onOnline = () => {
             if (typeof window.DiariOffline?.requestPwaSync === 'function') {
-                void window.DiariOffline.requestPwaSync().then(() => {
+                void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true }).then(() => {
                     if (signal.aborted) return;
                     entry = loadEntryFromList(entryKey) || entry;
                     syncReadPane();
