@@ -1950,8 +1950,16 @@ html.theme-dark .entry-edited-pill {
     }
 
     body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood .mood-label,
-    body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood .entry-edited-pill {
+    body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood .entry-edited-pill,
+    html.diari-pwa-standalone body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood .entry-sync-pill,
+    html[data-diari-pwa='standalone'] body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood .entry-sync-pill {
         flex: 0 0 auto !important;
+    }
+
+    html.diari-pwa-standalone body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood,
+    html[data-diari-pwa='standalone'] body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-mood {
+        flex-wrap: wrap !important;
+        max-width: min(100%, 11.5rem) !important;
     }
 
     body.page-entries .entries-section .entry-card > .entry-content-wrapper .mood-label {
@@ -2022,4 +2030,77 @@ html.theme-dark .entry-edited-pill {
     body.page-entries .entries-section .entry-card > .entry-content-wrapper .entry-excerpt {
         -webkit-line-clamp: 2 !important;
     }
+}
+
+/* PWA-only: offline sync status pills and deletion-pending card styling */
+html.diari-pwa-standalone .entry-mood,
+html[data-diari-pwa='standalone'] .entry-mood {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+}
+
+html.diari-pwa-standalone .entry-sync-pill,
+html[data-diari-pwa='standalone'] .entry-sync-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+html.diari-pwa-standalone .entry-sync-pill--pending,
+html[data-diari-pwa='standalone'] .entry-sync-pill--pending {
+    color: #5c4d00;
+    background: rgba(255, 193, 7, 0.22);
+    border: 1px solid rgba(255, 193, 7, 0.45);
+}
+
+html.diari-pwa-standalone .entry-sync-pill--edit,
+html[data-diari-pwa='standalone'] .entry-sync-pill--edit {
+    color: #0d4a6b;
+    background: rgba(13, 110, 253, 0.12);
+    border: 1px solid rgba(13, 110, 253, 0.28);
+}
+
+html.diari-pwa-standalone .entry-sync-pill--delete,
+html[data-diari-pwa='standalone'] .entry-sync-pill--delete {
+    color: #842029;
+    background: rgba(220, 53, 69, 0.14);
+    border: 1px solid rgba(220, 53, 69, 0.32);
+}
+
+html.diari-pwa-standalone .entry-card--deletion-pending,
+html[data-diari-pwa='standalone'] .entry-card--deletion-pending {
+    background: rgba(220, 80, 80, 0.1) !important;
+    border-color: rgba(220, 80, 80, 0.28) !important;
+}
+
+html.theme-dark.diari-pwa-standalone .entry-sync-pill--pending {
+    color: #ffe08a;
+    background: rgba(255, 193, 7, 0.16);
+    border-color: rgba(255, 193, 7, 0.35);
+}
+
+html.theme-dark.diari-pwa-standalone .entry-sync-pill--edit {
+    color: #9ec5fe;
+    background: rgba(13, 110, 253, 0.2);
+    border-color: rgba(13, 110, 253, 0.4);
+}
+
+html.theme-dark.diari-pwa-standalone .entry-sync-pill--delete {
+    color: #f1aeb5;
+    background: rgba(220, 53, 69, 0.22);
+    border-color: rgba(220, 53, 69, 0.45);
+}
+
+html.theme-dark.diari-pwa-standalone .entry-card--deletion-pending {
+    background: rgba(220, 80, 80, 0.16) !important;
+    border-color: rgba(220, 80, 80, 0.38) !important;
 }

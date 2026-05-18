@@ -26,8 +26,70 @@ let entriesMonthKeysOrdered = [];
 let entriesSelectedMonthKey = '';
 let entriesCurrentPage = 1;
 
+/** PWA installed / standalone — not desktop browser tab. */
+function isPwaOfflineEntriesUi() {
+    if (window.DiariOffline?.isPwaUiContext) {
+        return window.DiariOffline.isPwaUiContext();
+    }
+    if (window.DiariOffline?.isPwaStandalone) {
+        return window.DiariOffline.isPwaStandalone();
+    }
+    try {
+        if (window.DiariPWA && typeof window.DiariPWA.isStandalone === 'function' && window.DiariPWA.isStandalone()) {
+            return true;
+        }
+    } catch (_) {
+        /* ignore */
+    }
+    return (
+        document.documentElement.classList.contains('diari-pwa-standalone') ||
+        document.documentElement.getAttribute('data-diari-pwa') === 'standalone' ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        window.navigator.standalone === true
+    );
+}
+
+function ensurePwaDocumentMarkers() {
+    if (!isPwaOfflineEntriesUi()) return;
+    document.documentElement.classList.add('diari-pwa-standalone');
+    document.documentElement.setAttribute('data-diari-pwa', 'standalone');
+}
+
+function readEntriesListFromCache() {
+    if (window.DiariOffline && typeof window.DiariOffline.readEntriesCache === 'function') {
+        return window.DiariOffline.readEntriesCache();
+    }
+    try {
+        const arr = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
+        return Array.isArray(arr) ? arr : [];
+    } catch {
+        return [];
+    }
+}
+
+function resolveEntriesUserId() {
+    if (window.DiariOffline?.getUserId) {
+        const uid = window.DiariOffline.getUserId();
+        if (uid) return uid;
+    }
+    try {
+        const user = JSON.parse(localStorage.getItem('diariCoreUser') || 'null');
+        const raw = user?.id ?? user?.userId ?? 0;
+        const n = Number(raw);
+        return Number.isInteger(n) && n > 0 ? n : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function findCachedEntryByKey(entryKey) {
+    const key = String(entryKey ?? '');
+    return readEntriesListFromCache().find((e) => String(e?.id ?? '') === key) || null;
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
     try {
+    ensurePwaDocumentMarkers();
     try {
         if (sessionStorage.getItem('diariEntriesUpdatedToast') === '1') {
             sessionStorage.removeItem('diariEntriesUpdatedToast');
@@ -52,6 +114,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('diari-offline-sync-complete', () => {
         initializeEntriesFromStorage({ preserveNavigation: true });
     });
+    window.addEventListener('online', schedulePwaEntriesSync);
+    window.addEventListener('pageshow', (ev) => {
+        if (ev.persisted || document.visibilityState === 'visible') {
+            schedulePwaEntriesSync();
+        }
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            schedulePwaEntriesSync();
+        }
+    });
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();
@@ -60,10 +133,43 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 async function syncEntriesFromApi() {
-    if (window.DiariOffline?.syncEntriesFromApi) {
-        await window.DiariOffline.syncEntriesFromApi();
+    if (!isPwaOfflineEntriesUi()) {
+        if (window.DiariOffline?.syncEntriesFromApi) {
+            await window.DiariOffline.syncEntriesFromApi();
+        }
         return;
     }
+    if (typeof window.DiariOffline?.syncAll !== 'function') {
+        if (window.DiariOffline?.syncEntriesFromApi) {
+            await window.DiariOffline.syncEntriesFromApi();
+        }
+        return;
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await window.DiariOffline.syncAll();
+        const pending =
+            typeof window.DiariOffline.hasPendingOfflineWork === 'function' &&
+            window.DiariOffline.hasPendingOfflineWork();
+        if (!pending || navigator.onLine === false) break;
+        if (attempt < 2) {
+            await new Promise((r) => window.setTimeout(r, 700 * (attempt + 1)));
+        }
+    }
+}
+
+let entriesPwaSyncTimer = null;
+
+function schedulePwaEntriesSync() {
+    if (!isPwaOfflineEntriesUi()) return;
+    if (typeof window.DiariOffline?.syncAll !== 'function') return;
+    if (navigator.onLine === false) return;
+    if (entriesPwaSyncTimer) clearTimeout(entriesPwaSyncTimer);
+    entriesPwaSyncTimer = window.setTimeout(() => {
+        entriesPwaSyncTimer = null;
+        void syncEntriesFromApi().then(() => {
+            initializeEntriesFromStorage({ preserveNavigation: true });
+        });
+    }, 350);
 }
 
 function monthKeyFromDate(d) {
@@ -285,7 +391,7 @@ function initializeEntriesPagination() {
 
 function initializeEntriesFromStorage(options = {}) {
     const preserveNav = Boolean(options.preserveNavigation);
-    const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
+    const entries = readEntriesListFromCache();
     const main = document.querySelector('.entries-content');
     const emptyState = document.getElementById('entriesEmptyState');
     const firstSection = document.getElementById('entriesMainSection');
@@ -416,9 +522,41 @@ function entryCardTimeIso(ent) {
     return ent.date || ent.createdAt || '';
 }
 
+function entrySyncPillHtml(entry) {
+    if (!isPwaOfflineEntriesUi() || !entry) return '';
+    let label = null;
+    if (window.DiariOffline && typeof window.DiariOffline.getEntrySyncLabel === 'function') {
+        label = window.DiariOffline.getEntrySyncLabel(entry);
+    }
+    if (!label) {
+        if (entry.pwaDeletionPending === true) {
+            label = { text: 'Deletion Pending', kind: 'delete' };
+        } else if (entry.pwaEditPending === true) {
+            label = { text: 'Edit Pending', kind: 'edit' };
+        } else {
+            const id = String(entry.id ?? '');
+            const engine = String(entry.engine || '').toLowerCase();
+            if (
+                id.startsWith('offline_') ||
+                entry.pendingServerAnalysis === true ||
+                entry.moodScoringOffline === true ||
+                engine === 'offline-estimate' ||
+                engine === 'offline-local'
+            ) {
+                label = { text: 'Pending', kind: 'pending' };
+            }
+        }
+    }
+    if (!label) return '';
+    return `<span class="entry-sync-pill entry-sync-pill--${escapeHtml(label.kind)}">${escapeHtml(label.text)}</span>`;
+}
+
 function createStoredEntryCard(entry) {
     const article = document.createElement('article');
     article.className = 'entry-card';
+    if (entry.pwaDeletionPending === true && isPwaOfflineEntriesUi()) {
+        article.classList.add('entry-card--deletion-pending');
+    }
     if (entry.id != null && entry.id !== '') {
         article.dataset.entryId = String(entry.id);
     }
@@ -455,6 +593,7 @@ function createStoredEntryCard(entry) {
                     <h3 class="entry-title">${safeTitle}</h3>
                 </div>
                 <div class="entry-mood">
+                    ${entrySyncPillHtml(entry)}
                     <span class="mood-label mood-label--${escapeHtml(resolvedFeeling)}">${escapeHtml(moodLabel)}</span>
                     ${showEditedPill ? '<span class="entry-edited-pill" aria-label="Edited after save">Edited</span>' : ''}
                 </div>
@@ -723,33 +862,50 @@ function setEntriesDetailLoading(on) {
 }
 
 async function openEntriesDetailInline(entryId) {
+    const entryKey = String(entryId ?? '').trim();
+    if (!entryKey) return;
+
     const shell = document.getElementById('entriesDetailShell');
     const list = document.getElementById('entriesListShell');
     if (!shell || !list || !window.DiariEntryDetail || typeof window.DiariEntryDetail.mount !== 'function') {
-        window.location.href = `entry-view.html?id=${encodeURIComponent(String(entryId))}`;
+        window.location.href = `entry-view.html?id=${encodeURIComponent(entryKey)}`;
         return;
     }
+
+    const cached = findCachedEntryByKey(entryKey);
+    if (!cached) {
+        window.location.href = `entry-view.html?id=${encodeURIComponent(entryKey)}`;
+        return;
+    }
+
     setEntriesDetailLoading(true);
     try {
         const url = new URL(window.location.href);
-        url.searchParams.set('entryId', String(entryId));
+        url.searchParams.set('entryId', entryKey);
         window.history.replaceState({}, '', url.toString());
     } catch (_) {}
     list.hidden = true;
     document.body.classList.add('page-entries-detail-open');
     window.scrollTo(0, 0);
     try {
-        await window.DiariEntryDetail.mount({
-            entryId: Number(entryId),
+        const uid = resolveEntriesUserId();
+        const mountOpts = {
+            entryId: entryKey,
             onLeavePanel: closeEntriesDetailInline,
             afterMetadataSaveToEntries: () => {
                 closeEntriesDetailInline();
                 showNotification('Updated the Entry Successfully...', 'success');
             },
             afterEntryDeletedToEntries: () => {
-                showNotification('Entry was Deleted Successfully', 'success');
+                closeEntriesDetailInline();
             },
-        });
+        };
+        if (uid) mountOpts.userId = uid;
+        const mounted = await window.DiariEntryDetail.mount(mountOpts);
+        if (!mounted) {
+            window.location.href = `entry-view.html?id=${encodeURIComponent(entryKey)}`;
+            return;
+        }
         shell.hidden = false;
         void shell.offsetWidth;
         if (typeof window.DiariEntryDetail.refreshImages === 'function') {
@@ -807,8 +963,7 @@ function closeEntriesDetailInline() {
 function openEntriesDetailFromQuery() {
     try {
         const url = new URL(window.location.href);
-        const raw = url.searchParams.get('entryId');
-        const id = Number(raw);
+        const id = (url.searchParams.get('entryId') || '').trim();
         if (!id) return;
         const listShell = document.getElementById('entriesListShell');
         const detailShell = document.getElementById('entriesDetailShell');
@@ -847,7 +1002,7 @@ function showEntryDetails(card) {
         showNotification(`This entry cannot be opened (missing id): ${title}`, 'error');
         return;
     }
-    openEntriesDetailInline(Number(id));
+    openEntriesDetailInline(id);
 }
 
 // Legacy load-more UI removed from Entries page (month dropdown + pagination replace it).

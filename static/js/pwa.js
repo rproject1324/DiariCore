@@ -224,6 +224,7 @@
 
     if (isStandalone()) {
         document.documentElement.classList.add('diari-pwa-standalone');
+        document.documentElement.setAttribute('data-diari-pwa', 'standalone');
     }
 
     injectPwaHead();

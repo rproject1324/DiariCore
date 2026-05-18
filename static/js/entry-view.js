@@ -69,10 +69,18 @@
     }
 
     function getUserId() {
-        const user = JSON.parse(localStorage.getItem('diariCoreUser') || 'null');
-        const raw = user?.id ?? user?.userId ?? 0;
-        const parsed = Number(raw);
-        return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+        if (window.DiariOffline && typeof window.DiariOffline.getUserId === 'function') {
+            const uid = window.DiariOffline.getUserId();
+            if (uid) return uid;
+        }
+        try {
+            const user = JSON.parse(localStorage.getItem('diariCoreUser') || 'null');
+            const raw = user?.id ?? user?.userId ?? 0;
+            const parsed = Number(raw);
+            return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+        } catch {
+            return 0;
+        }
     }
 
     function normalizeTag(tag) {
@@ -89,27 +97,31 @@
 
     function parseQueryId() {
         const q = new URLSearchParams(window.location.search);
-        const raw = q.get('id');
-        const n = Number(raw);
-        return Number.isInteger(n) && n > 0 ? n : 0;
+        return (q.get('id') || q.get('entryId') || '').trim();
     }
 
-    function loadEntryFromList(entryId) {
-        const list = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
-        return list.find((e) => Number(e?.id) === entryId) || null;
+    function loadEntryFromList(entryKey) {
+        const key = String(entryKey ?? '');
+        const list =
+            window.DiariOffline && typeof window.DiariOffline.readEntriesCache === 'function'
+                ? window.DiariOffline.readEntriesCache()
+                : JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
+        return list.find((e) => String(e?.id ?? '') === key) || null;
     }
 
     function replaceEntryInList(updated) {
         const list = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
-        const idx = list.findIndex((e) => Number(e?.id) === Number(updated.id));
+        const key = String(updated?.id ?? '');
+        const idx = list.findIndex((e) => String(e?.id ?? '') === key);
         if (idx >= 0) list[idx] = { ...list[idx], ...updated };
         else list.unshift(updated);
         localStorage.setItem('diariCoreEntries', JSON.stringify(list));
     }
 
     function removeEntryFromList(id) {
+        const key = String(id ?? '');
         const list = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
-        const next = list.filter((e) => Number(e?.id) !== Number(id));
+        const next = list.filter((e) => String(e?.id ?? '') !== key);
         localStorage.setItem('diariCoreEntries', JSON.stringify(next));
     }
 
@@ -129,6 +141,14 @@
 
     function isOnline() {
         return navigator.onLine !== false;
+    }
+
+    async function shouldActOffline() {
+        if (!window.DiariOffline?.isPwaStandalone?.()) return false;
+        if (typeof window.DiariOffline.shouldActOffline === 'function') {
+            return window.DiariOffline.shouldActOffline();
+        }
+        return !isOnline();
     }
 
     const ENTRY_EDIT_MEDIA_DB = 'diariCoreOfflineEntryEditMedia';
@@ -543,7 +563,8 @@
         activeController = ac;
         const signal = ac.signal;
 
-        const entryId = Number(opts.entryId);
+        const entryKey = String(opts.entryId ?? '').trim();
+        const numericEntryId = /^\d+$/.test(entryKey) ? Number(entryKey) : 0;
         const userId = opts.userId != null ? Number(opts.userId) : getUserId();
         const onLeavePanel = typeof opts.onLeavePanel === 'function' ? opts.onLeavePanel : () => {};
         const afterMetadataSaveToEntries =
@@ -616,8 +637,7 @@
         let editMode = false;
 
         if (
-            !entryId ||
-            !userId ||
+            !entryKey ||
             !titleEl ||
             !bodyEl ||
             !tagsRow ||
@@ -644,20 +664,20 @@
         ) {
             onLeavePanel();
             unmount();
-            return;
+            return false;
         }
 
-        const listEntry = loadEntryFromList(entryId);
+        const listEntry = loadEntryFromList(entryKey);
         let entry = listEntry;
 
-        if (!entry && isOnline()) {
+        if (!entry && isOnline() && numericEntryId > 0) {
             const loadingTags =
                 '<span class="entry-view-tags-await" style="color:var(--text-muted);font-size:0.85rem;">Loading…</span>';
             tagsRead.innerHTML = loadingTags;
             try {
-                const res = await fetch(`/api/entries/${entryId}?userId=${encodeURIComponent(String(userId))}`);
+                const res = await fetch(`/api/entries/${numericEntryId}?userId=${encodeURIComponent(String(userId))}`);
                 const data = await res.json();
-                if (signal.aborted) return;
+                if (signal.aborted) return false;
                 if (res.ok && data.success && data.entry) {
                     entry = data.entry;
                     replaceEntryInList(entry);
@@ -665,12 +685,12 @@
             } catch (_) {}
         }
 
-        if (signal.aborted) return;
+        if (signal.aborted) return false;
 
         if (!entry) {
             onLeavePanel();
             unmount();
-            return;
+            return false;
         }
 
         let tags = new Set((Array.isArray(entry.tags) ? entry.tags : []).map(normalizeTag).filter(Boolean));
@@ -829,9 +849,9 @@
         async function persistDraftImages() {
             try {
                 if (editorImages.some((im) => im.dataUrl)) {
-                    await idbMediaPut(draftImagesKey(entryId), serializeImagesForStorage());
+                    await idbMediaPut(draftImagesKey(entryKey), serializeImagesForStorage());
                 } else {
-                    await idbMediaDelete(draftImagesKey(entryId));
+                    await idbMediaDelete(draftImagesKey(entryKey));
                 }
             } catch (_) {}
         }
@@ -1370,15 +1390,49 @@
 
         async function runConfirmedDelete() {
             if (signal.aborted || deleteRequestPending) return;
-            if (!isOnline()) {
+            if (await shouldActOffline()) {
+                if (typeof window.DiariOffline?.markEntryDeletionPending !== 'function') {
+                    closeDeleteDialog();
+                    window.alert('Connect to the internet to delete entries.');
+                    return;
+                }
+                deleteRequestPending = true;
+                deleteConfirmBtn.disabled = true;
+                try {
+                    await window.DiariOffline.markEntryDeletionPending(entryKey, userId);
+                    closeDeleteDialog();
+                    clearDraft();
+                    if (window.DiariToast && typeof window.DiariToast.show === 'function') {
+                        window.DiariToast.show(
+                            'Deletion pending. It will sync when you are back online.',
+                            'info',
+                            4000
+                        );
+                    }
+                    if (afterEntryDeletedToEntries) {
+                        onLeavePanel();
+                        afterEntryDeletedToEntries();
+                    } else {
+                        onLeavePanel();
+                    }
+                } catch (e) {
+                    console.error(e);
+                    window.alert('Could not queue this entry for deletion.');
+                } finally {
+                    deleteRequestPending = false;
+                    deleteConfirmBtn.disabled = false;
+                }
+                return;
+            }
+            if (!numericEntryId) {
                 closeDeleteDialog();
-                window.alert('Connect to the internet to delete entries.');
+                window.alert('This entry cannot be deleted until it syncs online.');
                 return;
             }
             deleteRequestPending = true;
             deleteConfirmBtn.disabled = true;
             try {
-                const res = await fetch(`/api/entries/${entryId}`, {
+                const res = await fetch(`/api/entries/${numericEntryId}`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId }),
@@ -1392,7 +1446,7 @@
                     return;
                 }
                 closeDeleteDialog();
-                removeEntryFromList(entryId);
+                removeEntryFromList(entryKey);
                 clearDraft();
                 if (afterEntryDeletedToEntries) {
                     onLeavePanel();
@@ -1414,7 +1468,7 @@
 
         function applyDraftFromStorage() {
             try {
-                const raw = localStorage.getItem(draftKey(entryId));
+                const raw = localStorage.getItem(draftKey(entryKey));
                 if (!raw) return;
                 const d = JSON.parse(raw);
                 if (!d || typeof d !== 'object') return;
@@ -1430,11 +1484,11 @@
             } catch (_) {}
         }
 
-        const hadDraft = Boolean(localStorage.getItem(draftKey(entryId)));
+        const hadDraft = Boolean(localStorage.getItem(draftKey(entryKey)));
 
         applyDraftFromStorage();
         try {
-            const row = await idbMediaGet(draftImagesKey(entryId));
+            const row = await idbMediaGet(draftImagesKey(entryKey));
             if (hadDraft && row?.images?.length) editorImages = reviveImageItems(row.images);
         } catch (_) {}
 
@@ -1524,7 +1578,7 @@
 
         function persistDraft() {
             localStorage.setItem(
-                draftKey(entryId),
+                draftKey(entryKey),
                 JSON.stringify({
                     title: titleEl.value,
                     text: bodyEl.value,
@@ -1537,8 +1591,8 @@
         }
 
         function clearDraft() {
-            localStorage.removeItem(draftKey(entryId));
-            void idbMediaDelete(draftImagesKey(entryId));
+            localStorage.removeItem(draftKey(entryKey));
+            void idbMediaDelete(draftImagesKey(entryKey));
         }
 
         async function loadTagChoices() {
@@ -1684,13 +1738,13 @@
         if (isOnline() && listEntry) {
             void (async () => {
                 try {
-                    const res = await fetch(`/api/entries/${entryId}?userId=${encodeURIComponent(String(userId))}`);
+                    const res = await fetch(`/api/entries/${numericEntryId}?userId=${encodeURIComponent(String(userId))}`);
                     const data = await res.json();
                     if (signal.aborted) return;
                     if (!res.ok || !data.success || !data.entry) return;
                     const incoming = data.entry;
                     replaceEntryInList(incoming);
-                    if (localStorage.getItem(draftKey(entryId))) {
+                    if (localStorage.getItem(draftKey(entryKey))) {
                         void loadTagChoices().then(() => {
                             if (!signal.aborted) fillPicker();
                         });
@@ -1967,7 +2021,10 @@
                 imageUrls: imageUrlsList,
                 reanalyze: Boolean(reanalyze),
             };
-            const res = await fetch(`/api/entries/${entryId}`, {
+            if (!numericEntryId) {
+                throw new Error('Entry is not synced yet.');
+            }
+            const res = await fetch(`/api/entries/${numericEntryId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -2007,9 +2064,11 @@
         }
 
         function offlineMergedEntry(reanalyze) {
-            const base = { ...entry, id: entryId };
+            const base = { ...entry, id: entryKey };
             const nowIso = new Date().toISOString();
             base.updatedAt = nowIso;
+            base.pwaEditPending = true;
+            base.pwaDeletionPending = false;
             if (!base.createdAt && entry?.createdAt) base.createdAt = entry.createdAt;
             if (!base.createdAt && entry?.date) base.createdAt = entry.date;
             base.title = titleEl.value.trim();
@@ -2029,12 +2088,12 @@
         }
 
         async function pushOfflineQueue(reanalyze) {
-            const mediaKey = `editq_${entryId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const mediaKey = `editq_${entryKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             try {
                 await idbMediaPut(mediaKey, serializeImagesForStorage());
             } catch (_) {}
             const record = {
-                entryId,
+                entryId: entryKey,
                 userId,
                 title: titleEl.value.trim(),
                 text: bodyEl.value.trim(),
@@ -2054,6 +2113,16 @@
             const q = readQueue();
             const next = [];
             for (const row of q) {
+                const rowKey = String(row.entryId || '');
+                if (rowKey.startsWith('offline_')) {
+                    next.push(row);
+                    continue;
+                }
+                const rowNumericId = Number(rowKey);
+                if (!Number.isInteger(rowNumericId) || rowNumericId <= 0) {
+                    next.push(row);
+                    continue;
+                }
                 try {
                     let imageUrls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
                     if (row.imageMediaKey) {
@@ -2089,16 +2158,20 @@
                     if (row.imageMediaKey || (Array.isArray(row.imageUrls) && row.imageUrls.length > 0)) {
                         body.imageUrls = imageUrls;
                     }
-                    const res = await fetch(`/api/entries/${row.entryId}`, {
+                    const res = await fetch(`/api/entries/${rowNumericId}`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body),
                     });
                     const data = await res.json();
                     if (res.ok && data.success && data.entry) {
-                        replaceEntryInList(data.entry);
+                        replaceEntryInList({
+                            ...data.entry,
+                            pwaEditPending: false,
+                            pwaDeletionPending: false,
+                        });
                         try {
-                            localStorage.removeItem(draftKey(Number(row.entryId)));
+                            localStorage.removeItem(draftKey(String(row.entryId)));
                         } catch (_) {}
                         if (row.imageMediaKey) await idbMediaDelete(row.imageMediaKey);
                         continue;
@@ -2144,11 +2217,15 @@
             }
             saveAnalyzeBtn.disabled = true;
             try {
-                if (!isOnline()) {
+                if (await shouldActOffline()) {
                     await pushOfflineQueue(reanalyze);
                     const merged = offlineMergedEntry(reanalyze);
-                    replaceEntryInList(merged);
-                    entry = merged;
+                    if (typeof window.DiariOffline?.markEntryEditPendingInCache === 'function') {
+                        window.DiariOffline.markEntryEditPendingInCache(entryKey, merged, userId);
+                    } else {
+                        replaceEntryInList(merged);
+                    }
+                    entry = loadEntryFromList(entryKey) || merged;
                     baseline = serializeState();
                     clearDraft();
                     renderImageStrip();
@@ -2160,9 +2237,9 @@
                         } catch (_) {}
                         global.DiariMoodAnalysis.showAnalysisLoading(overlay);
                         await global.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
-                        global.DiariMoodAnalysis.showAnalysisResult(overlay, merged, true, moodOptions(overlay));
+                        global.DiariMoodAnalysis.showAnalysisResult(overlay, entry, true, moodOptions(overlay));
                     }
-                    return reanalyze;
+                    return true;
                 }
 
                 try {
@@ -2277,6 +2354,8 @@
                 reflowEditorLayout();
             });
         });
+
+        return true;
     }
 
     global.DiariEntryDetail = {

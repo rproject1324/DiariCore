@@ -15,6 +15,7 @@
     const ENTRY_EDIT_MEDIA_STORE = 'records';
     /** Fallback when write-entry saves without IDB (same key as write-entry.js). */
     const OFFLINE_CREATE_QUEUE_LS = 'diariCoreOfflineCreateQueue';
+    const ENTRY_DELETE_QUEUE_KEY = 'diariCoreEntryDeleteQueue';
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -73,7 +74,7 @@
      * True when the entry should be saved locally (PWA airplane mode, offline events, or no network).
      */
     async function shouldSaveEntryOffline() {
-        if (!isPwaStandalone()) return false;
+        if (!isPwaUiContext()) return false;
         if (!isOnline()) return true;
         return !(await probeReachability());
     }
@@ -88,7 +89,10 @@
 
     function getUserId() {
         const user = getSessionUser();
-        return user?.isLoggedIn ? Number(user.id || 0) : 0;
+        if (!user?.isLoggedIn) return 0;
+        const raw = user.id ?? user.userId ?? 0;
+        const n = Number(raw);
+        return Number.isInteger(n) && n > 0 ? n : 0;
     }
 
     function readEntriesCache() {
@@ -135,15 +139,177 @@
 
     function isOfflineLocalEntry(entry) {
         if (!entry) return false;
+        if (entry.pwaDeletionPending === true) return true;
+        if (entry.pwaEditPending === true) return true;
         const id = String(entry.id ?? '');
         if (id.startsWith('offline_')) return true;
         return entry.pendingServerAnalysis === true || entry.moodScoringOffline === true;
     }
 
+    async function shouldActOffline() {
+        if (!isPwaUiContext()) return false;
+        if (!isOnline()) return true;
+        return !(await probeReachability());
+    }
+
+    function isPwaUiContext() {
+        return (
+            isPwaStandalone() ||
+            (global.document &&
+                global.document.documentElement.classList.contains('diari-pwa-standalone'))
+        );
+    }
+
+    function getEntrySyncLabel(entry) {
+        if (!isPwaUiContext() || !entry) return null;
+        if (entry.pwaDeletionPending === true) {
+            return { text: 'Deletion Pending', kind: 'delete' };
+        }
+        if (entry.pwaEditPending === true) {
+            return { text: 'Edit Pending', kind: 'edit' };
+        }
+        const id = String(entry.id ?? '');
+        const engine = String(entry.engine || '').toLowerCase();
+        if (
+            id.startsWith('offline_') ||
+            entry.pendingServerAnalysis === true ||
+            entry.moodScoringOffline === true ||
+            engine === 'offline-estimate' ||
+            engine === 'offline-local'
+        ) {
+            return { text: 'Pending', kind: 'pending' };
+        }
+        return null;
+    }
+
+    function readDeleteQueue() {
+        try {
+            const arr = JSON.parse(global.localStorage.getItem(ENTRY_DELETE_QUEUE_KEY) || '[]');
+            return Array.isArray(arr) ? arr : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function writeDeleteQueue(rows) {
+        global.localStorage.setItem(ENTRY_DELETE_QUEUE_KEY, JSON.stringify(rows));
+    }
+
+    function findEntryIndexInCache(list, entryKey) {
+        const key = String(entryKey ?? '');
+        return list.findIndex((e) => String(e?.id ?? '') === key);
+    }
+
+    function markEntryEditPendingInCache(entryKey, patch, userId) {
+        const list = readEntriesCache();
+        const idx = findEntryIndexInCache(list, entryKey);
+        if (idx < 0) return null;
+        list[idx] = {
+            ...list[idx],
+            ...(patch || {}),
+            pwaEditPending: true,
+            pwaDeletionPending: false,
+        };
+        writeEntriesCache(list, userId);
+        return list[idx];
+    }
+
+    async function removePendingCreateByLocalEntryId(localEntryId) {
+        const key = String(localEntryId ?? '');
+        if (!key) return;
+        const ls = readOfflineCreateQueueLs();
+        writeOfflineCreateQueueLs(ls.filter((r) => String(r.localEntryId || '') !== key));
+
+        try {
+            const pending = await pendingEntriesGetAll();
+            for (const row of pending) {
+                if (String(row.localEntryId || '') === key) {
+                    await pendingEntryDelete(row.id);
+                }
+            }
+        } catch (e) {
+            console.warn('[DiariOffline] Could not trim create queue:', e);
+        }
+    }
+
+    async function markEntryDeletionPending(entryKey, userId) {
+        const key = String(entryKey ?? '');
+        const list = readEntriesCache();
+        const idx = findEntryIndexInCache(list, key);
+        if (idx < 0) return false;
+
+        list[idx] = {
+            ...list[idx],
+            pwaDeletionPending: true,
+            pwaEditPending: false,
+        };
+        writeEntriesCache(list, userId);
+
+        const q = readDeleteQueue();
+        if (!q.some((row) => String(row.entryKey) === key)) {
+            q.push({
+                entryKey: key,
+                userId,
+                localOnly: key.startsWith('offline_'),
+                queuedAt: new Date().toISOString(),
+            });
+            writeDeleteQueue(q);
+        }
+
+        if (key.startsWith('offline_')) {
+            await removePendingCreateByLocalEntryId(key);
+            const editQ = readEditQueue().filter((row) => String(row.entryId) !== key);
+            writeEditQueue(editQ);
+        }
+        return true;
+    }
+
+    async function flushPendingEntryDeletes() {
+        if (!isPwaUiContext()) return;
+        const userId = getUserId();
+        if (!userId) return;
+
+        const q = readDeleteQueue();
+        if (!q.length) return;
+
+        const remaining = [];
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+
+        for (const row of q) {
+            const key = String(row.entryKey || '');
+            try {
+                if (row.localOnly || key.startsWith('offline_')) {
+                    const list = readEntriesCache().filter((e) => String(e?.id) !== key);
+                    writeEntriesCache(list, userId);
+                    continue;
+                }
+                const numericId = Number(key);
+                if (!Number.isInteger(numericId) || numericId <= 0) {
+                    continue;
+                }
+                const res = await fetchFn(`/api/entries/${numericId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: row.userId || userId }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data?.success) {
+                    throw new Error(data?.error || 'Delete sync failed');
+                }
+                const list = readEntriesCache().filter((e) => String(e?.id) !== key);
+                writeEntriesCache(list, userId);
+            } catch (e) {
+                console.warn('[DiariOffline] Pending delete sync failed:', key, e);
+                remaining.push(row);
+            }
+        }
+        writeDeleteQueue(remaining);
+    }
+
     /** Keep unsynced PWA offline drafts when refreshing from the server. */
     function mergeServerEntriesWithLocal(serverEntries, userId) {
         const server = Array.isArray(serverEntries) ? serverEntries : [];
-        if (!isPwaStandalone()) {
+        if (!isPwaUiContext()) {
             writeEntriesCache(server, userId);
             return server;
         }
@@ -153,12 +319,40 @@
             writeEntriesCache(server, userId);
             return server;
         }
+        const localById = new Map(local.map((e) => [String(e?.id ?? ''), e]));
+        const mergedServer = server.map((s) => {
+            const key = String(s?.id ?? '');
+            const loc = localById.get(key);
+            if (!loc) return s;
+            if (loc.pwaDeletionPending === true) {
+                return { ...s, pwaDeletionPending: true, pwaEditPending: false };
+            }
+            if (loc.pwaEditPending === true) {
+                return {
+                    ...s,
+                    title: loc.title ?? s.title,
+                    text: loc.text ?? s.text,
+                    tags: loc.tags ?? s.tags,
+                    imageUrls: loc.imageUrls ?? s.imageUrls,
+                    feeling: loc.feeling ?? s.feeling,
+                    emotionLabel: loc.emotionLabel ?? s.emotionLabel,
+                    emotionScore: loc.emotionScore ?? s.emotionScore,
+                    sentimentLabel: loc.sentimentLabel ?? s.sentimentLabel,
+                    sentimentScore: loc.sentimentScore ?? s.sentimentScore,
+                    all_probs: loc.all_probs ?? s.all_probs,
+                    moodScoringOffline: loc.moodScoringOffline ?? s.moodScoringOffline,
+                    pwaEditPending: true,
+                    pwaDeletionPending: false,
+                };
+            }
+            return s;
+        });
         const serverIds = new Set(server.map((e) => String(e?.id ?? '')));
         const kept = pending.filter((e) => {
             const id = String(e?.id ?? '');
             return !serverIds.has(id);
         });
-        const merged = [...server, ...kept];
+        const merged = [...mergedServer, ...kept];
         merged.sort((a, b) => {
             const ta = new Date(a?.date || a?.createdAt || 0).getTime();
             const tb = new Date(b?.date || b?.createdAt || 0).getTime();
@@ -183,6 +377,8 @@
 
         const pendingImages = (images || []).filter((im) => im && (im.dataUrl || im.url));
         const slimEntry = stripDataUrlsFromEntry(payload.entry);
+        slimEntry.pwaEditPending = false;
+        slimEntry.pwaDeletionPending = false;
         if (pendingImages.length > 0) {
             slimEntry.offlinePendingImages = pendingImages.length;
         }
@@ -192,7 +388,18 @@
             await queuePendingEntry(payload.queueRecord);
             queueOk = true;
         } catch (queueErr) {
-            console.warn('[DiariOffline] IndexedDB queue skipped:', queueErr);
+            console.warn('[DiariOffline] IndexedDB queue skipped, using localStorage queue:', queueErr);
+            try {
+                const ls = readOfflineCreateQueueLs();
+                const exists = ls.some((r) => r && r.id === payload.queueRecord.id);
+                if (!exists) {
+                    ls.push(payload.queueRecord);
+                    writeOfflineCreateQueueLs(ls);
+                }
+                queueOk = true;
+            } catch (lsErr) {
+                console.warn('[DiariOffline] localStorage create queue failed:', lsErr);
+            }
         }
 
         let list = stripEntriesListForStorage(readEntriesCache());
@@ -223,9 +430,23 @@
         const list = readEntriesCache();
         const id = entry.id;
         if (id != null && id !== '') {
-            const idx = list.findIndex((e) => Number(e?.id) === Number(id));
-            if (idx >= 0) list[idx] = { ...list[idx], ...entry };
-            else list.unshift(entry);
+            const key = String(id);
+            const idx = list.findIndex((e) => String(e?.id ?? '') === key);
+            const serverSynced =
+                /^\d+$/.test(key) &&
+                entry.pendingServerAnalysis !== true &&
+                !String(entry.engine || '').toLowerCase().startsWith('offline');
+            const patch = {
+                ...entry,
+                pwaEditPending: entry.pwaEditPending === true,
+                pwaDeletionPending: entry.pwaDeletionPending === true,
+            };
+            if (serverSynced) {
+                patch.pendingServerAnalysis = false;
+                patch.moodScoringOffline = false;
+            }
+            if (idx >= 0) list[idx] = { ...list[idx], ...patch };
+            else list.unshift(patch);
         } else {
             list.unshift(entry);
         }
@@ -470,6 +691,20 @@
         writeEntriesCache(list, userId);
     }
 
+    function remapEditQueueEntryId(oldId, newId) {
+        const from = String(oldId ?? '');
+        const to = String(newId ?? '');
+        if (!from || !to || from === to) return;
+        const q = readEditQueue();
+        let changed = false;
+        const next = q.map((row) => {
+            if (String(row.entryId) !== from) return row;
+            changed = true;
+            return { ...row, entryId: to };
+        });
+        if (changed) writeEditQueue(next);
+    }
+
     async function buildOfflineEntryPayload({ userId, title, entryDateTimeLocal, text, tags, images }) {
         const analysis = await analyzeForOffline(text);
         const now = new Date().toISOString();
@@ -514,7 +749,7 @@
 
         let reachable = false;
         if (isOnline()) {
-            reachable = isPwaStandalone() ? await probeReachability() : true;
+            reachable = isPwaUiContext() ? await probeReachability() : true;
         }
         if (!reachable) {
             return { ok: true, offline: true, entries: readEntriesCache(), fromCache: true };
@@ -585,9 +820,19 @@
                     throw new Error(result?.error || 'Offline sync entry save failed');
                 }
                 if (item.localEntryId) {
+                    remapEditQueueEntryId(item.localEntryId, result.entry.id);
                     removeOfflineEntryByLocalId(item.localEntryId, userId);
                 }
-                mergeEntryIntoCache(result.entry, userId);
+                mergeEntryIntoCache(
+                    {
+                        ...result.entry,
+                        pendingServerAnalysis: false,
+                        moodScoringOffline: false,
+                        pwaEditPending: false,
+                        pwaDeletionPending: false,
+                    },
+                    userId
+                );
                 await pendingEntryDelete(item.id);
             } catch (e) {
                 console.warn('[DiariOffline] Pending entry sync failed:', item?.id, e);
@@ -642,6 +887,16 @@
         const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
 
         for (const row of q) {
+            const entryKey = String(row.entryId || '');
+            if (entryKey.startsWith('offline_')) {
+                next.push(row);
+                continue;
+            }
+            const numericId = Number(entryKey);
+            if (!Number.isInteger(numericId) || numericId <= 0) {
+                next.push(row);
+                continue;
+            }
             try {
                 let imageUrls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
                 if (row.imageMediaKey) {
@@ -674,14 +929,21 @@
                 };
                 if (row.imageMediaKey || imageUrls.length) body.imageUrls = imageUrls;
 
-                const res = await fetchFn(`/api/entries/${row.entryId}`, {
+                const res = await fetchFn(`/api/entries/${numericId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                 });
                 const data = await res.json().catch(() => ({}));
                 if (res.ok && data.success && data.entry) {
-                    mergeEntryIntoCache(data.entry, userId);
+                    mergeEntryIntoCache(
+                        {
+                            ...data.entry,
+                            pwaEditPending: false,
+                            pwaDeletionPending: false,
+                        },
+                        userId
+                    );
                     if (row.imageMediaKey) await idbEditMediaDelete(row.imageMediaKey);
                     continue;
                 }
@@ -741,7 +1003,7 @@
     }
 
     async function reanalyzeCachedFallbackEntries() {
-        if (!isOnline() || !isPwaStandalone()) return;
+        if (!isOnline() || !isPwaUiContext()) return;
         const userId = getUserId();
         if (!userId) return;
 
@@ -774,13 +1036,28 @@
         }
     }
 
+    function hasPendingOfflineWork() {
+        if (readEditQueue().length > 0) return true;
+        if (readDeleteQueue().length > 0) return true;
+        if (readOfflineCreateQueueLs().length > 0) return true;
+        return readEntriesCache().some((e) => isOfflineLocalEntry(e));
+    }
+
     async function syncAll() {
-        if (!isPwaStandalone()) return;
+        if (!isPwaUiContext()) return;
         if (!isOnline()) return;
-        if (!(await probeReachability())) return;
+
+        let reachable = await probeReachability();
+        if (!reachable) {
+            await new Promise((r) => global.setTimeout(r, 600));
+            reachable = await probeReachability();
+        }
+        if (!reachable) return;
+
         global.dispatchEvent(new CustomEvent('diari-offline-sync'));
         await flushPendingEntryCreates();
         await flushPendingEntryEdits();
+        await flushPendingEntryDeletes();
         await flushTagSyncQueue();
         await reanalyzeCachedFallbackEntries();
         await syncEntriesFromApi();
@@ -802,7 +1079,7 @@
     }
 
     function init() {
-        if (!isPwaStandalone()) return;
+        if (!isPwaUiContext()) return;
         guardOfflineAuth();
         global.addEventListener('online', () => {
             void syncAll();
@@ -815,8 +1092,14 @@
     global.DiariOffline = {
         isOnline,
         isPwaStandalone,
+        isPwaUiContext,
+        hasPendingOfflineWork,
         probeReachability,
+        shouldActOffline,
         shouldSaveEntryOffline,
+        getEntrySyncLabel,
+        markEntryEditPendingInCache,
+        markEntryDeletionPending,
         getSessionUser,
         getUserId,
         readEntriesCache,
@@ -832,6 +1115,7 @@
         queuePendingEntry,
         flushPendingEntryCreates,
         flushPendingEntryEdits,
+        flushPendingEntryDeletes,
         flushTagSyncQueue,
         init,
         guardOfflineAuth,

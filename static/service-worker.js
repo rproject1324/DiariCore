@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v18';
+const CACHE_NAME = 'diaricore-pwa-v21';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -40,6 +40,8 @@ const PRECACHE_URLS = [
     '/diari-offline.js',
     '/diari-security.js',
     '/diari-shell.js',
+    '/entries.js',
+    '/entry-view.js',
     '/lottie-web.min.js',
     '/mood-scoring.js',
     '/side-bar.js',
@@ -117,21 +119,35 @@ self.addEventListener('fetch', (event) => {
 
     if (!isStaticAsset(url)) return;
 
+    const path = url.pathname;
+    const networkFirstJs = path.endsWith('.js');
+
     event.respondWith(
         (async () => {
             let cached = await caches.match(request);
-            if (cached) return cached;
-
-            const path = url.pathname;
-            if (PRECACHE_URL_SET.has(path)) {
+            if (!cached && PRECACHE_URL_SET.has(path)) {
                 cached = await caches.match(path);
-                if (cached) return cached;
             }
-            const base = path.split('/').pop();
-            if (base) {
-                cached = await caches.match('/' + base);
-                if (cached) return cached;
+            if (!cached) {
+                const base = path.split('/').pop();
+                if (base) cached = await caches.match('/' + base);
             }
+
+            if (networkFirstJs) {
+                try {
+                    const res = await fetch(request);
+                    if (res.ok) {
+                        const copy = res.clone();
+                        caches.open(CACHE_NAME).then((c) => c.put(request, copy));
+                    }
+                    return res;
+                } catch {
+                    if (cached) return cached;
+                    return (await caches.match('/write-entry.html')) || Response.error();
+                }
+            }
+
+            if (cached) return cached;
 
             try {
                 const res = await fetch(request);
