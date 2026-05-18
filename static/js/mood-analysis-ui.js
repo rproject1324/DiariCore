@@ -421,9 +421,18 @@
         overlay.hidden = false;
         entryUpdateLoadingShownAt = Date.now();
         entryUpdateSaveFinished = false;
+        entryUpdateProgressTotalMs =
+            options && options.pwaFast ? ENTRY_UPDATE_TOTAL_MS_PWA : ENTRY_UPDATE_TOTAL_MS;
 
-        const totalMs = ENTRY_UPDATE_TOTAL_MS;
+        const totalMs = entryUpdateProgressTotalMs;
         const progressStart = Date.now();
+        entryUpdateProgressSnap = () => {
+            clearMoodAnalysisProgressTimer();
+            progressPct.textContent = '100%';
+            progressWrap.setAttribute('aria-valuenow', '100');
+            progressFill.style.transition = 'none';
+            progressFill.style.width = '100%';
+        };
         moodAnalysisProgressTimer = setInterval(() => {
             const elapsed = Date.now() - progressStart;
             const pct = Math.min(100, Math.round((elapsed / totalMs) * 100));
