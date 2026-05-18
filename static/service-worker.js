@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v36';
+const CACHE_NAME = 'diaricore-pwa-v37';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
