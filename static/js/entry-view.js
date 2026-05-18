@@ -2413,6 +2413,14 @@
                         }
                         editorImages = imageItemsFromUrls(entry.imageUrls || []);
                         replaceEntryInList(entry);
+                        try {
+                            localStorage.removeItem('diariCoreSyncRevision');
+                        } catch (_) {
+                            /* ignore */
+                        }
+                        if (window.DiariOffline?.pullRemoteStateForRefresh) {
+                            void window.DiariOffline.pullRemoteStateForRefresh({ force: true });
+                        }
                         const engine = (data.analysisEngine || '').toString().toLowerCase();
                         await global.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
                         global.DiariMoodAnalysis.showAnalysisResult(overlay, data.entry, engine === 'fallback', moodOptions(overlay));
@@ -2445,6 +2453,14 @@
                     }
                     editorImages = imageItemsFromUrls(entry.imageUrls || []);
                     replaceEntryInList(entry);
+                    try {
+                        localStorage.removeItem('diariCoreSyncRevision');
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    if (window.DiariOffline?.pullRemoteStateForRefresh) {
+                        void window.DiariOffline.pullRemoteStateForRefresh({ force: true });
+                    }
                     clearDraft();
                     baseline = serializeState();
                     return true;

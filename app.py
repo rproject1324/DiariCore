@@ -3,6 +3,7 @@ DiariCore — Flask app serving static HTML/CSS/JS and JSON API for auth.
 Deploy on Railway with PostgreSQL (DATABASE_URL). Local dev uses SQLite.
 """
 
+import hashlib
 import os
 import json
 import uuid
@@ -16,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 import pyotp
 import segno
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory, abort, session, stream_with_context
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import auth_security as authsec
@@ -173,6 +175,7 @@ def _cleanup_removed_entry_uploads(old_urls: list[str], new_urls: list[str]) -> 
 
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.config["JSON_SORT_KEYS"] = False
 app.secret_key = os.environ.get("SECRET_KEY", "diaricore-dev-secret")
 
@@ -1048,6 +1051,58 @@ def api_user_me():
     return resp, 200
 
 
+def _compute_sync_revision(user_id: int, user_row: dict, entry_rows: list) -> str:
+    """Changes whenever profile, theme, or any entry is created/updated/deleted."""
+    latest_entry = ""
+    for r in entry_rows or []:
+        stamp = r.get("updated_at") or r.get("created_at")
+        if stamp is None:
+            continue
+        s = str(stamp)
+        if s > latest_entry:
+            latest_entry = s
+    profile_bits = "|".join(
+        str(user_row.get(k) or "")
+        for k in (
+            "nickname",
+            "email",
+            "first_name",
+            "last_name",
+            "gender",
+            "birthday",
+            "ui_preferences_json",
+        )
+    )
+    av = user_row.get("avatar_data_url") or ""
+    if isinstance(av, str) and av:
+        profile_bits += "|" + hashlib.sha256(av.encode("utf-8", errors="ignore")).hexdigest()[:24]
+    profile_hash = hashlib.sha256(profile_bits.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"{user_id}:{len(entry_rows or [])}:{latest_entry}:{profile_hash}"
+
+
+@app.route("/api/sync/check", methods=["GET"])
+def api_sync_check():
+    """Lightweight poll: revision only (live cross-device sync)."""
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
+    if auth_err:
+        return auth_err
+    row = db.get_user_by_id(user_id)
+    if not row:
+        return jsonify({"success": False, "error": "User not found."}), 404
+    rows = db.get_journal_entries_by_user(user_id)
+    resp = jsonify(
+        {
+            "success": True,
+            "serverTime": datetime.now(timezone.utc).isoformat(),
+            "syncRevision": _compute_sync_revision(user_id, row, rows),
+            "entriesCount": len(rows),
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp, 200
+
+
 @app.route("/api/sync/state", methods=["GET"])
 def api_sync_state():
     """Single pull: current user profile + all journal entries (cross-device refresh)."""
@@ -1062,6 +1117,7 @@ def api_sync_state():
         {
             "success": True,
             "serverTime": datetime.now(timezone.utc).isoformat(),
+            "syncRevision": _compute_sync_revision(user_id, row, rows),
             "user": serialize_user(row),
             "entries": [serialize_entry(r) for r in rows],
         }

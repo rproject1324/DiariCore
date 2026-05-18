@@ -19,6 +19,7 @@
     const PWA_PENDING_PROFILE_KEY = 'diariCorePwaPendingProfile';
     const PWA_PENDING_UI_PREFS_KEY = 'diariCorePwaPendingUiPrefs';
     const PWA_PENDING_AVATAR_KEY = 'diariCorePwaPendingAvatar';
+    const SYNC_REV_KEY = 'diariCoreSyncRevision';
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -1841,7 +1842,8 @@
     let remoteStateWatchStarted = false;
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
-    const LIVE_REMOTE_SYNC_MS = 5000;
+    const LIVE_REMOTE_SYNC_MS = 2500;
+    let remotePullPromise = null;
     let pwaLastReachable = null;
 
     function currentAppPageName() {
@@ -1895,48 +1897,119 @@
             }
             clearOrphanedPwaPendingAfterServerPull();
 
+            if (data.syncRevision) {
+                try {
+                    global.localStorage.setItem(SYNC_REV_KEY, String(data.syncRevision));
+                } catch (_) {
+                    /* ignore */
+                }
+            }
+
             notifyRemoteStateRefresh();
             runPageRefreshHandlers();
-            return { ok: true, serverTime: data.serverTime };
+            return { ok: true, serverTime: data.serverTime, syncRevision: data.syncRevision };
         } catch (err) {
             console.warn('[DiariOffline] pullFromServerHard failed:', err);
             return { ok: false, reason: 'network-error' };
         }
     }
 
+    async function fetchSyncCheck() {
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        const res = await fetchFn('/api/sync/check?_=' + Date.now(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        });
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
+    }
+
+    /**
+     * Cheap poll: true when Railway data changed since last pull on this device.
+     */
+    async function hasRemoteRevisionChanged() {
+        try {
+            const { res, data } = await fetchSyncCheck();
+            if (res.status === 401) {
+                return { changed: false, authExpired: true };
+            }
+            if (!res.ok || !data.success) {
+                return { changed: true, reason: 'check-failed' };
+            }
+            const prev = global.localStorage.getItem(SYNC_REV_KEY) || '';
+            const next = String(data.syncRevision || '');
+            return { changed: prev !== next, syncRevision: next };
+        } catch {
+            return { changed: true, reason: 'network' };
+        }
+    }
+
+    async function runPrePullFlush() {
+        if (!isPwaUiContext()) return;
+        let pending = false;
+        try {
+            pending = await hasPendingOfflineWorkAsync();
+        } catch {
+            pending = hasPendingOfflineWork();
+        }
+        if (pending) {
+            try {
+                await flushPendingEntryCreates();
+                await flushPendingEntryEdits();
+                await flushPendingEntryDeletes();
+                await flushTagSyncQueue();
+                await flushPwaProfilePending();
+                await flushPwaAvatarPending();
+                await flushPwaUiPrefsPending();
+            } catch (e) {
+                console.warn('[DiariOffline] pre-pull flush failed:', e);
+            }
+        }
+        sanitizeEntriesCachePwaFlags();
+    }
+
     /**
      * Force a network pull + UI refresh (page reload, tab return, live sync).
+     * @param {{ force?: boolean }} options - force=true skips revision check (page load).
      */
-    async function pullRemoteStateForRefresh() {
+    async function pullRemoteStateForRefresh(options = {}) {
         if (!getUserId()) return { ok: false, reason: 'anon' };
         syncPageLoadPromise = null;
 
-        if (isPwaUiContext()) {
-            let pending = false;
-            try {
-                pending = await hasPendingOfflineWorkAsync();
-            } catch {
-                pending = hasPendingOfflineWork();
-            }
-            if (pending) {
-                try {
-                    await flushPendingEntryCreates();
-                    await flushPendingEntryEdits();
-                    await flushPendingEntryDeletes();
-                    await flushTagSyncQueue();
-                    await flushPwaProfilePending();
-                    await flushPwaAvatarPending();
-                    await flushPwaUiPrefsPending();
-                } catch (e) {
-                    console.warn('[DiariOffline] pre-pull flush failed:', e);
-                }
-            }
-            sanitizeEntriesCachePwaFlags();
+        if (remotePullPromise && options.force !== true) {
+            return remotePullPromise;
         }
 
-        const result = await pullFromServerHard();
-        handleAuthExpiredFromSync(result);
-        return result;
+        remotePullPromise = (async () => {
+            await runPrePullFlush();
+
+            if (options.force !== true) {
+                const check = await hasRemoteRevisionChanged();
+                if (check.authExpired) {
+                    const expired = { ok: false, authExpired: true };
+                    handleAuthExpiredFromSync(expired);
+                    return expired;
+                }
+                if (!check.changed) {
+                    return { ok: true, unchanged: true };
+                }
+            }
+
+            const result = await pullFromServerHard();
+            handleAuthExpiredFromSync(result);
+            return result;
+        })()
+            .catch((e) => {
+                console.warn('[DiariOffline] pullRemoteStateForRefresh failed:', e);
+                return { ok: false, reason: 'error' };
+            })
+            .finally(() => {
+                remotePullPromise = null;
+            });
+
+        return remotePullPromise;
     }
 
     /**
@@ -1946,7 +2019,7 @@
 
     function startBootServerSync() {
         if (bootServerSyncPromise || !isAuthenticatedAppPage()) return;
-        bootServerSyncPromise = pullRemoteStateForRefresh().finally(() => {
+        bootServerSyncPromise = pullRemoteStateForRefresh({ force: true }).finally(() => {
             bootServerSyncPromise = null;
         });
     }
@@ -1956,7 +2029,7 @@
         if (bootServerSyncPromise) {
             return bootServerSyncPromise;
         }
-        return pullRemoteStateForRefresh();
+        return pullRemoteStateForRefresh({ force: true });
     }
 
     function startLiveRemoteSync() {
@@ -2062,6 +2135,12 @@
         global.location.href = 'login.html';
     }
 
+    function tryStartAuthenticatedSync() {
+        if (!isAuthenticatedAppPage()) return;
+        startBootServerSync();
+        startLiveRemoteSync();
+    }
+
     function init() {
         ensurePwaDocumentMarkers();
         if (isPwaUiContext()) {
@@ -2069,13 +2148,13 @@
             startPwaConnectivityWatch();
         }
         startRemoteStateWatch();
-        if (isAuthenticatedAppPage()) {
-            startBootServerSync();
-            startLiveRemoteSync();
-        }
+        tryStartAuthenticatedSync();
     }
 
     ensurePwaDocumentMarkers();
+    if (getUserId() > 0 && isAuthenticatedAppPage()) {
+        tryStartAuthenticatedSync();
+    }
 
     global.DiariOffline = {
         isOnline,

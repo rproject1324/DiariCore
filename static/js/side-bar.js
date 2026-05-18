@@ -113,6 +113,10 @@ class SidebarComponent {
         document.addEventListener('diari-user-updated', () => {
             this.applyCurrentUserIdentity();
         });
+        document.addEventListener('diari-remote-state-refreshed', () => {
+            hydrateMobileTopbarProfileFromStorage();
+            this.applyCurrentUserIdentity();
+        });
         document.addEventListener('diari-mobile-shell-ready', hydrateMobileTopbarProfileFromStorage);
     }
 

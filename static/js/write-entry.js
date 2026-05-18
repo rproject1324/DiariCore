@@ -2239,6 +2239,14 @@ document.addEventListener('DOMContentLoaded', async function () {
             const entries = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
             entries.push(savedEntry);
             localStorage.setItem('diariCoreEntries', JSON.stringify(entries));
+            try {
+                localStorage.removeItem('diariCoreSyncRevision');
+            } catch (_) {
+                /* ignore */
+            }
+            if (window.DiariOffline?.pullRemoteStateForRefresh) {
+                void window.DiariOffline.pullRemoteStateForRefresh({ force: true });
+            }
             console.log('Entry saved:', savedEntry);
 
             await window.DiariMoodAnalysis.delayUntilMoodAnalysisGate();

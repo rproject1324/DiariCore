@@ -249,6 +249,14 @@
                 .then(function (data) {
                     if (!data || !data.success || !data.user) return;
                     applyFromUserObject(data.user);
+                    try {
+                        localStorage.removeItem('diariCoreSyncRevision');
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    if (window.DiariOffline && typeof window.DiariOffline.pullRemoteStateForRefresh === 'function') {
+                        void window.DiariOffline.pullRemoteStateForRefresh({ force: true });
+                    }
                 })
                 .catch(function () {});
         }, 450);

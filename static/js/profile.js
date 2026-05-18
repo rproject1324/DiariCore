@@ -1413,6 +1413,14 @@ function finishProfilePersonalSaveSuccess(serverUser) {
         return;
     }
     mergeDiariUserIntoStorage(serverUser);
+    try {
+        localStorage.removeItem('diariCoreSyncRevision');
+    } catch (_) {
+        /* ignore */
+    }
+    if (window.DiariOffline?.pullRemoteStateForRefresh) {
+        void window.DiariOffline.pullRemoteStateForRefresh({ force: true });
+    }
     initializeProfileFromStorage();
     showNotification('Profile updated.', 'success');
     closeProfileSection();
