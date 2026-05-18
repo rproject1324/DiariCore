@@ -102,7 +102,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     } catch (_) {}
 
     await syncEntriesFromApi();
-    if (isPwaOfflineEntriesUi()) entriesPwaInitialSyncDone = true;
+    if (isPwaOfflineEntriesUi()) {
+        if (typeof window.DiariOffline?.sanitizeEntriesCachePwaFlags === 'function') {
+            window.DiariOffline.sanitizeEntriesCachePwaFlags();
+        }
+        entriesPwaInitialSyncDone = true;
+    }
     initializeEntriesFromStorage();
     await syncEntriesFilterTagsFromApi();
     initializeFilterDropdown();
@@ -580,7 +585,12 @@ function entrySyncPillHtml(entry) {
     if (!label) {
         if (entry.pwaDeletionPending === true) {
             label = { text: 'Deletion Pending', kind: 'delete' };
-        } else if (entry.pwaEditPending === true) {
+        } else if (
+            entry.pwaEditPending === true &&
+            window.DiariOffline &&
+            typeof window.DiariOffline.hasQueuedEditForEntry === 'function' &&
+            window.DiariOffline.hasQueuedEditForEntry(String(entry.id ?? ''))
+        ) {
             label = { text: 'Edit Pending', kind: 'edit' };
         } else {
             const id = String(entry.id ?? '');

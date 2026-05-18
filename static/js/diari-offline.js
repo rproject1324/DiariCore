@@ -16,6 +16,8 @@
     /** Fallback when write-entry saves without IDB (same key as write-entry.js). */
     const OFFLINE_CREATE_QUEUE_LS = 'diariCoreOfflineCreateQueue';
     const ENTRY_DELETE_QUEUE_KEY = 'diariCoreEntryDeleteQueue';
+    const PWA_PENDING_PROFILE_KEY = 'diariCorePwaPendingProfile';
+    const PWA_PENDING_UI_PREFS_KEY = 'diariCorePwaPendingUiPrefs';
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -180,7 +182,7 @@
         if (entry.pwaDeletionPending === true) {
             return { text: 'Deletion Pending', kind: 'delete' };
         }
-        if (entry.pwaEditPending === true) {
+        if (entry.pwaEditPending === true && hasQueuedEditForEntry(String(entry.id ?? ''))) {
             return { text: 'Edit Pending', kind: 'edit' };
         }
         const id = String(entry.id ?? '');
@@ -242,6 +244,12 @@
         const key = String(record?.entryId ?? '');
         const q = readEditQueue().filter((row) => String(row?.entryId ?? '') !== key);
         q.push(record);
+        writeEditQueue(q);
+    }
+
+    function removeEditQueueForEntry(entryKey) {
+        const key = String(entryKey ?? '');
+        const q = readEditQueue().filter((row) => String(row?.entryId ?? '') !== key);
         writeEditQueue(q);
     }
 
@@ -374,6 +382,158 @@
     function hasQueuedDeleteForEntry(entryKey) {
         const key = String(entryKey ?? '');
         return readDeleteQueue().some((r) => String(r?.entryId ?? '') === key);
+    }
+
+    function readPwaPendingProfile() {
+        try {
+            const raw = global.localStorage.getItem(PWA_PENDING_PROFILE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function writePwaPendingProfile(patch) {
+        if (!patch || typeof patch !== 'object') {
+            global.localStorage.removeItem(PWA_PENDING_PROFILE_KEY);
+            return;
+        }
+        global.localStorage.setItem(PWA_PENDING_PROFILE_KEY, JSON.stringify(patch));
+    }
+
+    function hasPwaPendingProfile() {
+        const p = readPwaPendingProfile();
+        return !!(p && typeof p === 'object' && Object.keys(p).length > 0);
+    }
+
+    function readPwaPendingUiPrefs() {
+        try {
+            const raw = global.localStorage.getItem(PWA_PENDING_UI_PREFS_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function writePwaPendingUiPrefs(prefs) {
+        if (!prefs || typeof prefs !== 'object') {
+            global.localStorage.removeItem(PWA_PENDING_UI_PREFS_KEY);
+            return;
+        }
+        global.localStorage.setItem(PWA_PENDING_UI_PREFS_KEY, JSON.stringify(prefs));
+    }
+
+    function hasPwaPendingUiPrefs() {
+        const p = readPwaPendingUiPrefs();
+        return !!(p && (p.uiTheme || p.uiPaletteId));
+    }
+
+    function mergePwaProfileIntoUser(patch) {
+        if (!patch || typeof patch !== 'object') return;
+        try {
+            const raw = global.localStorage.getItem(USER_KEY);
+            if (!raw) return;
+            const u = JSON.parse(raw);
+            if (!u || typeof u !== 'object') return;
+            Object.assign(u, patch);
+            global.localStorage.setItem(USER_KEY, JSON.stringify(u));
+            global.dispatchEvent(new CustomEvent('diari-user-updated'));
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
+    function savePwaProfilePending(patch) {
+        if (!isPwaUiContext() || !patch) return;
+        const prev = readPwaPendingProfile() || {};
+        const next = Object.assign({}, prev, patch);
+        writePwaPendingProfile(next);
+        mergePwaProfileIntoUser(patch);
+    }
+
+    function savePwaUiPrefsPending(prefs) {
+        if (!isPwaUiContext() || !prefs) return;
+        const prev = readPwaPendingUiPrefs() || {};
+        const next = Object.assign({}, prev, prefs);
+        writePwaPendingUiPrefs(next);
+        mergePwaProfileIntoUser({
+            uiTheme: next.uiTheme,
+            uiPaletteId: next.uiPaletteId,
+        });
+    }
+
+    async function flushPwaProfilePending() {
+        if (!isOnline() || !isPwaUiContext()) return;
+        const pending = readPwaPendingProfile();
+        if (!pending || typeof pending !== 'object') return;
+        const userId = getUserId();
+        if (!userId) return;
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        try {
+            const body = Object.assign({ userId }, pending);
+            const res = await fetchFn('/api/user/profile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Profile sync failed');
+            }
+            if (data.user) mergePwaProfileIntoUser(data.user);
+            writePwaPendingProfile(null);
+        } catch (e) {
+            console.warn('[DiariOffline] PWA profile sync failed:', e);
+        }
+    }
+
+    async function flushPwaUiPrefsPending() {
+        if (!isOnline() || !isPwaUiContext()) return;
+        const pending = readPwaPendingUiPrefs();
+        if (!pending || typeof pending !== 'object') return;
+        const userId = getUserId();
+        if (!userId) return;
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        const body = { userId };
+        if (pending.uiTheme === 'light' || pending.uiTheme === 'dark') body.uiTheme = pending.uiTheme;
+        if (pending.uiPaletteId) body.uiPaletteId = pending.uiPaletteId;
+        if (!body.uiTheme && !body.uiPaletteId) {
+            writePwaPendingUiPrefs(null);
+            return;
+        }
+        try {
+            const res = await fetchFn('/api/user/ui-preferences', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                credentials: 'same-origin',
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'UI preferences sync failed');
+            }
+            if (data.user && global.DiariTheme && typeof global.DiariTheme.applyFromUser === 'function') {
+                global.DiariTheme.applyFromUser(data.user);
+            }
+            writePwaPendingUiPrefs(null);
+        } catch (e) {
+            console.warn('[DiariOffline] PWA UI prefs sync failed:', e);
+        }
+    }
+
+    function sanitizeEntriesCachePwaFlags() {
+        if (!isPwaUiContext()) return;
+        const userId = getUserId();
+        const list = readEntriesCache();
+        let changed = false;
+        const next = list.map((e) => {
+            if (!e || e.pwaEditPending !== true) return e;
+            const key = String(e.id ?? '');
+            if (hasQueuedEditForEntry(key)) return e;
+            changed = true;
+            return { ...e, pwaEditPending: false };
+        });
+        if (changed) writeEntriesCache(next, userId);
     }
 
     /** Keep unsynced PWA offline drafts when refreshing from the server. */
@@ -999,6 +1159,9 @@
             await flushPendingEntryEdits();
             await flushPendingEntryDeletes();
             await flushTagSyncQueue();
+            await flushPwaProfilePending();
+            await flushPwaUiPrefsPending();
+            sanitizeEntriesCachePwaFlags();
             await reanalyzeCachedFallbackEntries();
             await syncEntriesFromApi({
                 skipReachabilityProbe: true,
@@ -1194,6 +1357,8 @@
         if (readEditQueue().length > 0) return true;
         if (readDeleteQueue().length > 0) return true;
         if (readOfflineCreateQueueLs().length > 0) return true;
+        if (hasPwaPendingProfile()) return true;
+        if (hasPwaPendingUiPrefs()) return true;
         return readEntriesCache().some((e) => isOfflineLocalEntry(e));
     }
 
@@ -1275,6 +1440,15 @@
         shouldActOffline,
         shouldSaveEntryOffline,
         getEntrySyncLabel,
+        hasQueuedEditForEntry,
+        removeEditQueueForEntry,
+        savePwaProfilePending,
+        savePwaUiPrefsPending,
+        hasPwaPendingProfile,
+        hasPwaPendingUiPrefs,
+        flushPwaProfilePending,
+        flushPwaUiPrefsPending,
+        sanitizeEntriesCachePwaFlags,
         markEntryEditPendingInCache,
         upsertEditQueueRecord,
         markEntryDeletionPending,

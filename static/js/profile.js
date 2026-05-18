@@ -7,6 +7,19 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeStorageActions();
     initializeProfileSectionNavigation();
     initializeAccountDetailPanels();
+    if (isPwaProfileContext()) {
+        window.addEventListener('diari-offline-sync-complete', function () {
+            hydratePersonalInfoPanel();
+            if (window.DiariTheme && typeof window.DiariTheme.syncToggleState === 'function') {
+                window.DiariTheme.syncToggleState();
+            }
+        });
+        window.addEventListener('online', function () {
+            if (window.DiariOffline?.requestPwaSync) {
+                void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
+            }
+        });
+    }
 });
 
 let profileSecPwLiveInst = null;
@@ -46,6 +59,57 @@ let profileEmailChangeOtpResendInterval = null;
 let profileEmailChangeOtpResendRemaining = 0;
 let profileEmailChangeOtpVerifyInProgress = false;
 let profileEmailChangeOtpAutoVerifyTimeout = null;
+
+const PWA_OFFLINE_SAVED_MSG = 'Saved offline. Changes will sync automatically when connected.';
+const PWA_INTERNET_REQUIRED_MSG = 'Please connect to the internet and try again.';
+
+function isPwaProfileContext() {
+    if (window.DiariOffline && typeof window.DiariOffline.isPwaUiContext === 'function') {
+        return window.DiariOffline.isPwaUiContext();
+    }
+    return false;
+}
+
+async function isPwaOfflineForUserActions() {
+    if (!isPwaProfileContext()) return false;
+    if (!navigator.onLine) return true;
+    if (typeof window.DiariOffline?.shouldActOffline === 'function') {
+        return window.DiariOffline.shouldActOffline();
+    }
+    return false;
+}
+
+function showPwaInternetRequiredToast() {
+    showNotification(PWA_INTERNET_REQUIRED_MSG, 'warning', 5000);
+}
+
+function showPwaSavedOfflineToast() {
+    showNotification(PWA_OFFLINE_SAVED_MSG, 'info', 5000);
+}
+
+window.handlePwaProfilePalettePick = async function (paletteId) {
+    if (!paletteId || !window.DiariTheme) return;
+    if (await isPwaOfflineForUserActions()) {
+        window.DiariTheme.setPalette(paletteId, { skipServerSync: true });
+        if (window.DiariOffline?.savePwaUiPrefsPending) {
+            window.DiariOffline.savePwaUiPrefsPending({
+                uiPaletteId: paletteId,
+                uiTheme: window.DiariTheme.getTheme(),
+            });
+        }
+        showPwaSavedOfflineToast();
+        return;
+    }
+    window.DiariTheme.setPalette(paletteId);
+};
+
+function finishProfilePersonalSaveSuccessOffline(patch) {
+    const prev = getStoredDiariUser() || {};
+    mergeDiariUserIntoStorage(Object.assign({}, prev, patch));
+    initializeProfileFromStorage();
+    hydratePersonalInfoPanel();
+    showPwaSavedOfflineToast();
+}
 
 function initializeProfileFromStorage() {
     try {
@@ -1619,7 +1683,7 @@ function savePersonalInfoForm() {
     void Promise.all([
         checkProfilePersonalAvailability('profileFieldNickname', nick),
         checkProfilePersonalAvailability('profileFieldEmail', email),
-    ]).then(function (results) {
+    ]).then(async function (results) {
         if (!results[0] || !results[1]) {
             refreshProfilePersonalSaveButton();
             showNotification('Username or email is not available.', 'warning');
@@ -1635,6 +1699,7 @@ function savePersonalInfoForm() {
             .toLowerCase();
         const newEmailNorm = email.trim().toLowerCase();
         const emailChanged = newEmailNorm !== originalEmail;
+        const offline = await isPwaOfflineForUserActions();
 
         const profileBody = {
             userId: uid,
@@ -1649,6 +1714,12 @@ function savePersonalInfoForm() {
         if (saveBtn) saveBtn.disabled = true;
 
         if (emailChanged) {
+            if (offline) {
+                if (saveBtn) saveBtn.disabled = false;
+                refreshProfilePersonalSaveButton();
+                showPwaInternetRequiredToast();
+                return;
+            }
             fetch('/api/user/profile/email-change-request', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1684,6 +1755,22 @@ function savePersonalInfoForm() {
                     refreshProfilePersonalSaveButton();
                     showNotification('Could not reach the server.', 'error');
                 });
+            return;
+        }
+
+        if (offline) {
+            const patch = {
+                firstName: first,
+                lastName: last,
+                nickname: nick,
+                gender: gender || null,
+                birthday: bday || null,
+            };
+            if (window.DiariOffline?.savePwaProfilePending) {
+                window.DiariOffline.savePwaProfilePending(patch);
+            }
+            if (saveBtn) saveBtn.disabled = false;
+            finishProfilePersonalSaveSuccessOffline(patch);
             return;
         }
 
@@ -2009,7 +2096,11 @@ async function submitProfilePasswordChangeRequest(isResend) {
         }
         return false;
     }
-    if (!navigator.onLine) {
+    if (await isPwaOfflineForUserActions()) {
+        showPwaInternetRequiredToast();
+        return false;
+    }
+    if (!isPwaProfileContext() && !navigator.onLine) {
         showNotification('You must be online to change your password.', 'error');
         return false;
     }
@@ -2290,19 +2381,26 @@ function initializeAccountDetailPanels() {
         totpToggle.addEventListener('change', function () {
             if (totpToggle.dataset.hydrating === '1') return;
             const wantOn = totpToggle.checked;
-            const user = getStoredDiariUser();
-            if (!user || !user.id) {
-                showNotification('Sign in to manage two-factor authentication.', 'warning');
-                totpToggle.checked = false;
-                return;
-            }
-            if (wantOn) {
-                totpToggle.checked = false;
-                openTotpSetupModal();
-            } else {
-                totpToggle.checked = true;
-                openTotpDisableModal();
-            }
+            void (async function () {
+                if (await isPwaOfflineForUserActions()) {
+                    totpToggle.checked = !wantOn;
+                    showPwaInternetRequiredToast();
+                    return;
+                }
+                const user = getStoredDiariUser();
+                if (!user || !user.id) {
+                    showNotification('Sign in to manage two-factor authentication.', 'warning');
+                    totpToggle.checked = false;
+                    return;
+                }
+                if (wantOn) {
+                    totpToggle.checked = false;
+                    openTotpSetupModal();
+                } else {
+                    totpToggle.checked = true;
+                    openTotpDisableModal();
+                }
+            })();
         });
     }
 }
@@ -2559,21 +2657,36 @@ function initializePreferenceToggles() {
             const row = this.closest('.appearance-item, .notifications-item, .preference-item');
             if (!row) return;
 
-            if (this.id === 'toggleDarkMode' && window.DiariTheme && typeof window.DiariTheme.setTheme === 'function') {
-                window.DiariTheme.setTheme(this.checked ? 'dark' : 'light');
-            }
+            void (async function () {
+                const isChecked = toggle.checked;
+                const titleEl = row.querySelector(
+                    '.appearance-subtitle, .notifications-subtitle, .preference-title'
+                );
+                const preferenceTitle = titleEl ? titleEl.textContent.trim() : 'Preference';
 
-            const titleEl = row.querySelector(
-                '.appearance-subtitle, .notifications-subtitle, .preference-title'
-            );
-            const preferenceTitle = titleEl ? titleEl.textContent.trim() : 'Preference';
-            const isChecked = this.checked;
-            
-            showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
-            console.log('Preference changed:', preferenceTitle, isChecked);
-            
-            // In a real app, this would save to backend
-            savePreference(preferenceTitle, isChecked);
+                if (toggle.id === 'toggleDarkMode' && window.DiariTheme && typeof window.DiariTheme.setTheme === 'function') {
+                    const nextTheme = isChecked ? 'dark' : 'light';
+                    if (await isPwaOfflineForUserActions()) {
+                        window.DiariTheme.setTheme(nextTheme, { skipServerSync: true });
+                        if (window.DiariOffline?.savePwaUiPrefsPending) {
+                            window.DiariOffline.savePwaUiPrefsPending({
+                                uiTheme: nextTheme,
+                                uiPaletteId: window.DiariTheme.getPalette(),
+                            });
+                        }
+                        showPwaSavedOfflineToast();
+                        return;
+                    }
+                    window.DiariTheme.setTheme(nextTheme);
+                    showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
+                    return;
+                }
+
+                if (!(await isPwaOfflineForUserActions())) {
+                    showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
+                    savePreference(preferenceTitle, isChecked);
+                }
+            })();
         });
     });
 }
@@ -2883,9 +2996,10 @@ function initializeProfileSectionNavigation() {
 }
 
 // Show Notification
-function showNotification(message, type = 'info') {
+function showNotification(message, type = 'info', durationMs) {
+    const duration = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 3000;
     if (window.DiariToast && typeof window.DiariToast.show === 'function') {
-        window.DiariToast.show(message, type, 3000);
+        window.DiariToast.show(message, type, duration);
         return;
     }
     // Remove existing notification
@@ -2945,7 +3059,7 @@ function showNotification(message, type = 'info') {
                 notification.remove();
             }
         }, 300);
-    }, 3000);
+    }, duration);
 }
 
 // Get Notification Icon

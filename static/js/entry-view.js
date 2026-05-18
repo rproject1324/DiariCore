@@ -2379,6 +2379,9 @@
                             pwaEditPending: false,
                             pwaDeletionPending: false,
                         };
+                        if (typeof window.DiariOffline?.removeEditQueueForEntry === 'function') {
+                            window.DiariOffline.removeEditQueueForEntry(entryKey);
+                        }
                         editorImages = imageItemsFromUrls(entry.imageUrls || []);
                         replaceEntryInList(entry);
                         const engine = (data.analysisEngine || '').toString().toLowerCase();
@@ -2407,6 +2410,9 @@
                         pwaEditPending: false,
                         pwaDeletionPending: false,
                     };
+                    if (typeof window.DiariOffline?.removeEditQueueForEntry === 'function') {
+                        window.DiariOffline.removeEditQueueForEntry(entryKey);
+                    }
                     editorImages = imageItemsFromUrls(entry.imageUrls || []);
                     replaceEntryInList(entry);
                     clearDraft();

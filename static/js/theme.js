@@ -181,8 +181,19 @@
             const ru = localStorage.getItem('diariCoreUser');
             if (ru) {
                 const parsed = JSON.parse(ru);
-                if (parsed && parsed.isLoggedIn && (parsed.uiTheme || parsed.uiPaletteId)) {
-                    applyFromUserObject(parsed);
+                const pwaPendingUi =
+                    window.DiariOffline &&
+                    typeof window.DiariOffline.hasPwaPendingUiPrefs === 'function' &&
+                    window.DiariOffline.hasPwaPendingUiPrefs();
+                if (parsed && parsed.isLoggedIn && (parsed.uiTheme || parsed.uiPaletteId) && !pwaPendingUi) {
+                    const lt = getSavedTheme();
+                    const lp = getSavedPaletteId();
+                    const matchesLocal =
+                        (!parsed.uiTheme || parsed.uiTheme === lt) &&
+                        (!parsed.uiPaletteId || parsed.uiPaletteId === lp);
+                    if (matchesLocal) {
+                        applyFromUserObject(parsed);
+                    }
                 }
             }
         } catch (_) {}
@@ -236,6 +247,18 @@
         }, 450);
     }
 
+    function persistUserUiPrefsLocally(theme, paletteId) {
+        try {
+            const raw = localStorage.getItem('diariCoreUser');
+            if (!raw) return;
+            const cur = JSON.parse(raw);
+            if (!cur || typeof cur !== 'object') return;
+            if (theme === 'light' || theme === 'dark') cur.uiTheme = theme;
+            if (paletteId && VALID_PALETTE_IDS.has(paletteId)) cur.uiPaletteId = paletteId;
+            localStorage.setItem('diariCoreUser', JSON.stringify(cur));
+        } catch (_) {}
+    }
+
     function applyFromUserObject(u) {
         if (!u || typeof u !== 'object') return;
         if (isAuthPage()) return;
@@ -267,6 +290,7 @@
         applyTheme(nextTheme);
         syncFabState(nextTheme);
         syncToggleState();
+        persistUserUiPrefsLocally(nextTheme, getSavedPaletteId());
         window.dispatchEvent(new CustomEvent('diari-theme-changed', { detail: { theme: nextTheme } }));
         if (!(opts && opts.skipServerSync)) {
             queueSyncUserUiPreferences();
@@ -277,6 +301,7 @@
         const nextPalette = getPaletteById(paletteId);
         localStorage.setItem(PALETTE_KEY, nextPalette.id);
         applyPaletteById(nextPalette.id);
+        persistUserUiPrefsLocally(getSavedTheme(), nextPalette.id);
         if (!(opts && opts.skipServerSync)) {
             queueSyncUserUiPreferences();
         }
@@ -390,6 +415,26 @@
             btn.addEventListener('click', function () {
                 const paletteId = this.getAttribute('data-theme-palette');
                 if (!paletteId) return;
+                const inProfilePrefs = Boolean(
+                    document.getElementById('profileSectionPreferences') &&
+                        !document.getElementById('profileSectionPreferences').hidden
+                );
+                if (
+                    inProfilePrefs &&
+                    window.DiariOffline &&
+                    typeof window.DiariOffline.isPwaUiContext === 'function' &&
+                    window.DiariOffline.isPwaUiContext() &&
+                    typeof window.handlePwaProfilePalettePick === 'function'
+                ) {
+                    void window.handlePwaProfilePalettePick(paletteId);
+                    const panel = document.getElementById('themePalettePanel');
+                    const toggleBtn = document.getElementById('themePaletteToggle');
+                    if (panel && toggleBtn) {
+                        panel.hidden = true;
+                        toggleBtn.setAttribute('aria-expanded', 'false');
+                    }
+                    return;
+                }
                 setPalette(paletteId);
                 const panel = document.getElementById('themePalettePanel');
                 const toggleBtn = document.getElementById('themePaletteToggle');
