@@ -2,7 +2,9 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+    if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
+        await window.DiariOffline.pullRemoteStateForRefresh();
+    } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     }
 
@@ -2393,15 +2395,11 @@ document.addEventListener('DOMContentLoaded', async function () {
         window.DiariOffline.wirePwaPageAutoSync(refreshWriteEntryFromSyncedStorage);
     }
 
-    window.addEventListener('pageshow', () => {
-        if (navigator.onLine === false) return;
-        void (async () => {
-            if (window.DiariOffline?.syncAllForPageLoad) {
-                await window.DiariOffline.syncAllForPageLoad();
-            }
-            await refreshWriteEntryFromSyncedStorage();
-        })();
-    });
+    if (window.DiariOffline?.registerPageRefreshHandler) {
+        window.DiariOffline.registerPageRefreshHandler(() => {
+            void refreshWriteEntryFromSyncedStorage();
+        });
+    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

@@ -3,11 +3,16 @@
 document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('diari-offline-sync-complete', initializeEmotionalSupportFromData);
     window.addEventListener('diari-remote-state-refreshed', initializeEmotionalSupportFromData);
+    if (window.DiariOffline?.registerPageRefreshHandler) {
+        window.DiariOffline.registerPageRefreshHandler(initializeEmotionalSupportFromData);
+    }
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
     }
 
-    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+    if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
+        await window.DiariOffline.pullRemoteStateForRefresh();
+    } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     }
     try {

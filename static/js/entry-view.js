@@ -2564,7 +2564,9 @@
             window.location.href = 'entries.html';
             return;
         }
-        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
+            await window.DiariOffline.pullRemoteStateForRefresh();
+        } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
             await window.DiariOffline.syncAllForPageLoad();
         }
         await mount({
@@ -2585,11 +2587,9 @@
         }
     });
 
-    window.addEventListener('pageshow', (event) => {
+    window.addEventListener('pageshow', () => {
         if (!document.body.classList.contains('page-entry-view')) return;
         if (navigator.onLine === false) return;
-        if (event && event.persisted) {
-            void bootstrapEntryViewPage();
-        }
+        void bootstrapEntryViewPage();
     });
 })(typeof window !== 'undefined' ? window : this);

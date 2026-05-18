@@ -16,11 +16,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('offline', function () {
         refreshProfilePersonalSaveButton();
     });
+    if (window.DiariOffline?.registerPageRefreshHandler) {
+        window.DiariOffline.registerPageRefreshHandler(refreshProfileAfterPwaSync);
+    }
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
     }
 
-    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+    if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
+        await window.DiariOffline.pullRemoteStateForRefresh();
+    } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     }
     refreshProfileAfterPwaSync();

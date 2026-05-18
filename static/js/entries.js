@@ -104,7 +104,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     } catch (_) {}
 
-    await syncEntriesFromApi();
+    if (typeof window.DiariOffline?.pullRemoteStateForRefresh === 'function') {
+        await window.DiariOffline.pullRemoteStateForRefresh();
+    } else {
+        await syncEntriesFromApi();
+    }
     if (isPwaOfflineEntriesUi()) {
         entriesPwaInitialSyncDone = true;
     }
@@ -122,19 +126,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         void syncEntriesFilterTagsFromApi();
     };
 
+    if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
+        window.DiariOffline.registerPageRefreshHandler(refreshEntriesFromSyncedStorage);
+    }
     window.addEventListener('diari-offline-sync-complete', refreshEntriesFromSyncedStorage);
     window.addEventListener('diari-remote-state-refreshed', refreshEntriesFromSyncedStorage);
     window.addEventListener('diari-entries-cache-updated', refreshEntriesFromSyncedStorage);
-
-    window.addEventListener('pageshow', () => {
-        if (navigator.onLine === false) return;
-        void (async () => {
-            if (typeof window.DiariOffline?.syncAllForPageLoad === 'function') {
-                await window.DiariOffline.syncAllForPageLoad();
-            }
-            refreshEntriesFromSyncedStorage();
-        })();
-    });
 
     if (typeof window.DiariOffline?.wirePwaPageAutoSync === 'function') {
         window.DiariOffline.wirePwaPageAutoSync(refreshEntriesFromSyncedStorage);

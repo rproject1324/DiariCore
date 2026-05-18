@@ -1032,7 +1032,10 @@ def api_user_me():
     row = db.get_user_by_id(user_id)
     if not row:
         return jsonify({"success": False, "error": "User not found."}), 404
-    return jsonify({"success": True, "user": serialize_user(row)}), 200
+    resp = jsonify({"success": True, "user": serialize_user(row)})
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp, 200
 
 
 @app.route("/api/user/avatar", methods=["POST"])
@@ -1789,7 +1792,10 @@ def api_entries_get():
     if not user:
         return jsonify({"success": False, "error": "User not found."}), 404
     rows = db.get_journal_entries_by_user(user_id)
-    return jsonify({"success": True, "entries": [serialize_entry(r) for r in rows]}), 200
+    resp = jsonify({"success": True, "entries": [serialize_entry(r) for r in rows]})
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp, 200
 
 
 @app.route("/api/tags", methods=["GET"])

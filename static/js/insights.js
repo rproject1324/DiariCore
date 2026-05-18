@@ -295,7 +295,12 @@ function refreshInsightsFromSyncedStorage() {
 
 document.addEventListener('DOMContentLoaded', async function() {
     try {
-    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+    if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
+        window.DiariOffline.registerPageRefreshHandler(refreshInsightsFromSyncedStorage);
+    }
+    if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
+        await window.DiariOffline.pullRemoteStateForRefresh();
+    } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     } else {
         await syncInsightsEntriesFromApi();
