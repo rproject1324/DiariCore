@@ -179,7 +179,10 @@
             userId: serverUser.id ?? prev.userId ?? prev.id,
         });
 
-        if (!(remoteWins && !hasPending)) {
+        const forceRemote = options.forceRemote === true;
+        const applyServerOnly = forceRemote || (remoteWins && !hasPending);
+
+        if (!applyServerOnly) {
             if (hasPwaPendingAvatar()) {
                 const pendingAv = readPwaPendingAvatar();
                 if (pendingAv) merged.avatarDataUrl = pendingAv;
@@ -728,6 +731,88 @@
     }
 
     /**
+     * Refresh pull: server list is truth; only keep unsynced offline drafts / queued edits on this device.
+     */
+    function applyServerEntriesOnRefresh(serverEntries, userId) {
+        sanitizeEntriesCachePwaFlags();
+        const server = Array.isArray(serverEntries) ? serverEntries : [];
+        if (!isPwaUiContext()) {
+            writeEntriesCache(server, userId);
+            return server;
+        }
+
+        const local = readEntriesCache();
+        const serverIds = new Set(server.map((e) => String(e?.id ?? '')));
+        const localById = new Map(local.map((e) => [String(e?.id ?? ''), e]));
+
+        const mergedServer = server.map((s) => {
+            const key = String(s?.id ?? '');
+            const loc = localById.get(key);
+            if (!loc) return s;
+            if (loc.pwaDeletionPending === true && hasQueuedDeleteForEntry(key)) {
+                return { ...s, pwaDeletionPending: true, pwaEditPending: false };
+            }
+            if (loc.pwaEditPending === true && hasQueuedEditForEntry(key)) {
+                return {
+                    ...s,
+                    title: loc.title ?? s.title,
+                    text: loc.text ?? s.text,
+                    tags: loc.tags ?? s.tags,
+                    imageUrls: loc.imageUrls ?? s.imageUrls,
+                    feeling: loc.feeling ?? s.feeling,
+                    emotionLabel: loc.emotionLabel ?? s.emotionLabel,
+                    emotionScore: loc.emotionScore ?? s.emotionScore,
+                    sentimentLabel: loc.sentimentLabel ?? s.sentimentLabel,
+                    sentimentScore: loc.sentimentScore ?? s.sentimentScore,
+                    all_probs: loc.all_probs ?? s.all_probs,
+                    moodScoringOffline: loc.moodScoringOffline ?? s.moodScoringOffline,
+                    pwaEditPending: true,
+                    pwaDeletionPending: false,
+                    pwaShowEdited: false,
+                };
+            }
+            return s;
+        });
+
+        const extra = local.filter((e) => {
+            if (!e) return false;
+            const id = String(e?.id ?? '');
+            if (serverIds.has(id)) return false;
+            if (id.startsWith('offline_')) return true;
+            return isOfflineLocalEntry(e);
+        });
+
+        const merged = [...mergedServer, ...extra];
+        merged.sort((a, b) => {
+            const ta = new Date(a?.date || a?.createdAt || 0).getTime();
+            const tb = new Date(b?.date || b?.createdAt || 0).getTime();
+            return tb - ta;
+        });
+        writeEntriesCache(merged, userId);
+        return merged;
+    }
+
+    /** Drop stuck PWA pending profile/theme keys when nothing is queued to upload. */
+    function clearOrphanedPwaPendingAfterServerPull() {
+        if (!isPwaUiContext()) return;
+        if (readEditQueue().length > 0) return;
+        if (readDeleteQueue().length > 0) return;
+        if (readOfflineCreateQueueLs().length > 0) return;
+        const hasActiveDraft = readEntriesCache().some((e) => {
+            if (!e) return false;
+            const id = String(e?.id ?? '');
+            if (id.startsWith('offline_')) return true;
+            if (e.pwaEditPending === true && hasQueuedEditForEntry(id)) return true;
+            if (e.pwaDeletionPending === true && hasQueuedDeleteForEntry(id)) return true;
+            return false;
+        });
+        if (hasActiveDraft) return;
+        writePwaPendingProfile(null);
+        writePwaPendingUiPrefs(null);
+        writePwaPendingAvatar(null);
+    }
+
+    /**
      * Save a new entry locally for offline mode (PWA). Uses browser storage only — not phone disk directly.
      */
     async function saveEntryLocally({ userId, title, entryDateTimeLocal, text, tags, images }) {
@@ -1157,7 +1242,6 @@
     }
 
     async function shouldApplyServerEntriesDirectly(options = {}) {
-        if (!isOnline()) return false;
         if (options.remoteWins !== true) return false;
         let pending = false;
         try {
@@ -1804,17 +1888,12 @@
             }
 
             if (data.user) {
-                mergeServerUserIntoLocal(data.user, { remoteWins: true });
+                mergeServerUserIntoLocal(data.user, { remoteWins: true, forceRemote: true });
             }
             if (Array.isArray(data.entries)) {
-                if (await shouldApplyServerEntriesDirectly({ remoteWins: true })) {
-                    writeEntriesCache(data.entries, userId);
-                } else if (isPwaUiContext()) {
-                    mergeServerEntriesWithLocal(data.entries, userId);
-                } else {
-                    writeEntriesCache(data.entries, userId);
-                }
+                applyServerEntriesOnRefresh(data.entries, userId);
             }
+            clearOrphanedPwaPendingAfterServerPull();
 
             notifyRemoteStateRefresh();
             runPageRefreshHandlers();
@@ -1832,25 +1911,30 @@
         if (!getUserId()) return { ok: false, reason: 'anon' };
         syncPageLoadPromise = null;
 
-        let pending = false;
-        try {
-            pending = await hasPendingOfflineWorkAsync();
-        } catch {
-            pending = hasPendingOfflineWork();
+        if (isPwaUiContext()) {
+            let pending = false;
+            try {
+                pending = await hasPendingOfflineWorkAsync();
+            } catch {
+                pending = hasPendingOfflineWork();
+            }
+            if (pending) {
+                try {
+                    await flushPendingEntryCreates();
+                    await flushPendingEntryEdits();
+                    await flushPendingEntryDeletes();
+                    await flushTagSyncQueue();
+                    await flushPwaProfilePending();
+                    await flushPwaAvatarPending();
+                    await flushPwaUiPrefsPending();
+                } catch (e) {
+                    console.warn('[DiariOffline] pre-pull flush failed:', e);
+                }
+            }
+            sanitizeEntriesCachePwaFlags();
         }
 
-        let result;
-        if (isPwaUiContext() && pending) {
-            result = await syncAllForPageLoad({
-                forceRefresh: true,
-                refresh: true,
-                remoteWins: true,
-                trustNavigatorOnline: true,
-            });
-        } else {
-            result = await pullFromServerHard();
-        }
-
+        const result = await pullFromServerHard();
         handleAuthExpiredFromSync(result);
         return result;
     }
@@ -1858,8 +1942,20 @@
     /**
      * Every authenticated page should await this before reading localStorage for UI.
      */
+    let bootServerSyncPromise = null;
+
+    function startBootServerSync() {
+        if (bootServerSyncPromise || !isAuthenticatedAppPage()) return;
+        bootServerSyncPromise = pullRemoteStateForRefresh().finally(() => {
+            bootServerSyncPromise = null;
+        });
+    }
+
     async function awaitServerState() {
         if (!getUserId()) return { ok: false, reason: 'anon' };
+        if (bootServerSyncPromise) {
+            return bootServerSyncPromise;
+        }
         return pullRemoteStateForRefresh();
     }
 
@@ -1974,6 +2070,7 @@
         }
         startRemoteStateWatch();
         if (isAuthenticatedAppPage()) {
+            startBootServerSync();
             startLiveRemoteSync();
         }
     }
