@@ -2,7 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+    if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     }
 

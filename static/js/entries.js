@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 async function syncEntriesFromApi() {
-    if (typeof window.DiariOffline?.awaitServerState === 'function' && navigator.onLine !== false) {
+    if (typeof window.DiariOffline?.awaitServerState === 'function') {
         await window.DiariOffline.awaitServerState();
         return;
     }

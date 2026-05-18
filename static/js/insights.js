@@ -298,7 +298,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
         window.DiariOffline.registerPageRefreshHandler(refreshInsightsFromSyncedStorage);
     }
-    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+    if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     } else {
         await syncInsightsEntriesFromApi();

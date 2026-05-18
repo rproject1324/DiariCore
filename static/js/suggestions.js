@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
     }
 
-    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+    if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     }
     try {

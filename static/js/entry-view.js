@@ -2564,7 +2564,7 @@
             window.location.href = 'entries.html';
             return;
         }
-        if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+        if (window.DiariOffline?.awaitServerState) {
             await window.DiariOffline.awaitServerState();
         }
         await mount({

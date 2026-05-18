@@ -1048,6 +1048,29 @@ def api_user_me():
     return resp, 200
 
 
+@app.route("/api/sync/state", methods=["GET"])
+def api_sync_state():
+    """Single pull: current user profile + all journal entries (cross-device refresh)."""
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
+    if auth_err:
+        return auth_err
+    row = db.get_user_by_id(user_id)
+    if not row:
+        return jsonify({"success": False, "error": "User not found."}), 404
+    rows = db.get_journal_entries_by_user(user_id)
+    resp = jsonify(
+        {
+            "success": True,
+            "serverTime": datetime.now(timezone.utc).isoformat(),
+            "user": serialize_user(row),
+            "entries": [serialize_entry(r) for r in rows],
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp, 200
+
+
 @app.route("/api/user/avatar", methods=["POST"])
 def api_user_avatar():
     """Save or clear the signed-in user's profile photo (data URL stored server-side)."""

@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
     }
 
-    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+    if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     }
     refreshProfileAfterPwaSync();

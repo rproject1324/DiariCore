@@ -104,7 +104,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
         window.DiariOffline.registerPageRefreshHandler(refreshDashboardFromSyncedStorage);
     }
-    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+    if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     } else {
         await syncEntriesFromApi();

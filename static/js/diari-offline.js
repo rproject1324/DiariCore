@@ -1757,7 +1757,7 @@
     let remoteStateWatchStarted = false;
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
-    const LIVE_REMOTE_SYNC_MS = 8000;
+    const LIVE_REMOTE_SYNC_MS = 5000;
     let pwaLastReachable = null;
 
     function currentAppPageName() {
@@ -1781,18 +1781,76 @@
     }
 
     /**
+     * Direct Railway pull — one request, replace local cache when allowed (no navigator.onLine gate).
+     */
+    async function pullFromServerHard() {
+        const userId = getUserId();
+        if (!userId) return { ok: false, reason: 'anon' };
+
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        try {
+            const res = await fetchFn('/api/sync/state?_=' + Date.now(), {
+                method: 'GET',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.status === 401) {
+                return { ok: false, authExpired: true };
+            }
+            if (!res.ok || !data.success) {
+                return { ok: false, reason: 'api-error', status: res.status };
+            }
+
+            if (data.user) {
+                mergeServerUserIntoLocal(data.user, { remoteWins: true });
+            }
+            if (Array.isArray(data.entries)) {
+                if (await shouldApplyServerEntriesDirectly({ remoteWins: true })) {
+                    writeEntriesCache(data.entries, userId);
+                } else if (isPwaUiContext()) {
+                    mergeServerEntriesWithLocal(data.entries, userId);
+                } else {
+                    writeEntriesCache(data.entries, userId);
+                }
+            }
+
+            notifyRemoteStateRefresh();
+            runPageRefreshHandlers();
+            return { ok: true, serverTime: data.serverTime };
+        } catch (err) {
+            console.warn('[DiariOffline] pullFromServerHard failed:', err);
+            return { ok: false, reason: 'network-error' };
+        }
+    }
+
+    /**
      * Force a network pull + UI refresh (page reload, tab return, live sync).
      */
     async function pullRemoteStateForRefresh() {
         if (!getUserId()) return { ok: false, reason: 'anon' };
-        if (!isOnline()) return { ok: false, reason: 'offline' };
         syncPageLoadPromise = null;
-        const result = await syncAllForPageLoad({
-            forceRefresh: true,
-            refresh: true,
-            remoteWins: true,
-            trustNavigatorOnline: true,
-        });
+
+        let pending = false;
+        try {
+            pending = await hasPendingOfflineWorkAsync();
+        } catch {
+            pending = hasPendingOfflineWork();
+        }
+
+        let result;
+        if (isPwaUiContext() && pending) {
+            result = await syncAllForPageLoad({
+                forceRefresh: true,
+                refresh: true,
+                remoteWins: true,
+                trustNavigatorOnline: true,
+            });
+        } else {
+            result = await pullFromServerHard();
+        }
+
         handleAuthExpiredFromSync(result);
         return result;
     }
@@ -1802,7 +1860,6 @@
      */
     async function awaitServerState() {
         if (!getUserId()) return { ok: false, reason: 'anon' };
-        if (!isOnline()) return { ok: false, reason: 'offline' };
         return pullRemoteStateForRefresh();
     }
 
@@ -1813,7 +1870,6 @@
         const tick = () => {
             if (!isAuthenticatedAppPage()) return;
             if (document.visibilityState === 'hidden') return;
-            if (!isOnline()) return;
             void pullRemoteStateForRefresh();
         };
 
@@ -1950,6 +2006,7 @@
         flushPwaUiPrefsPending,
         syncAllForPageLoad,
         pullRemoteStateForRefresh,
+        pullFromServerHard,
         awaitServerState,
         registerPageRefreshHandler,
         mergeServerUserIntoLocal,
