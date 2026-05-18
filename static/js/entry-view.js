@@ -606,7 +606,7 @@
      *   onLeavePanel: () => void,
      *   userId?: number,
      *   afterMetadataSaveToEntries?: () => void,
-     *   afterEntryDeletedToEntries?: () => void,
+     *   afterEntryDeletedToEntries?: (detail?: { offline?: boolean }) => void,
      * }} opts
      */
     async function mount(opts) {
@@ -1525,7 +1525,7 @@
                 clearDraft();
                 if (afterEntryDeletedToEntries) {
                     onLeavePanel();
-                    afterEntryDeletedToEntries();
+                    afterEntryDeletedToEntries({ offline: false });
                 } else {
                     try {
                         sessionStorage.setItem('diariEntriesDeletedToast', '1');
