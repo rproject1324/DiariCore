@@ -133,6 +133,41 @@
         }
     }
 
+    function isOfflineLocalEntry(entry) {
+        if (!entry) return false;
+        const id = String(entry.id ?? '');
+        if (id.startsWith('offline_')) return true;
+        return entry.pendingServerAnalysis === true || entry.moodScoringOffline === true;
+    }
+
+    /** Keep unsynced PWA offline drafts when refreshing from the server. */
+    function mergeServerEntriesWithLocal(serverEntries, userId) {
+        const server = Array.isArray(serverEntries) ? serverEntries : [];
+        if (!isPwaStandalone()) {
+            writeEntriesCache(server, userId);
+            return server;
+        }
+        const local = readEntriesCache();
+        const pending = local.filter((e) => isOfflineLocalEntry(e));
+        if (!pending.length) {
+            writeEntriesCache(server, userId);
+            return server;
+        }
+        const serverIds = new Set(server.map((e) => String(e?.id ?? '')));
+        const kept = pending.filter((e) => {
+            const id = String(e?.id ?? '');
+            return !serverIds.has(id);
+        });
+        const merged = [...server, ...kept];
+        merged.sort((a, b) => {
+            const ta = new Date(a?.date || a?.createdAt || 0).getTime();
+            const tb = new Date(b?.date || b?.createdAt || 0).getTime();
+            return tb - ta;
+        });
+        writeEntriesCache(merged, userId);
+        return merged;
+    }
+
     /**
      * Save a new entry locally for offline mode (PWA). Uses browser storage only — not phone disk directly.
      */
@@ -477,13 +512,21 @@
             global.localStorage.setItem(ENTRIES_KEY, '[]');
         }
 
-        if (!isOnline()) {
+        let reachable = false;
+        if (isOnline()) {
+            reachable = isPwaStandalone() ? await probeReachability() : true;
+        }
+        if (!reachable) {
             return { ok: true, offline: true, entries: readEntriesCache(), fromCache: true };
         }
 
         try {
             const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
-            const response = await fetchFn('/api/entries', { credentials: 'same-origin' });
+            const response = await fetchFn('/api/entries', {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+            });
             const result = await response.json().catch(() => ({}));
             if (response.status === 401) {
                 global.localStorage.setItem(ENTRIES_KEY, '[]');
@@ -493,8 +536,8 @@
             if (!response.ok || !result.success || !Array.isArray(result.entries)) {
                 return { ok: false, offline: false, entries: readEntriesCache(), fromCache: true };
             }
-            writeEntriesCache(result.entries, userId);
-            return { ok: true, offline: false, entries: result.entries };
+            const merged = mergeServerEntriesWithLocal(result.entries, userId);
+            return { ok: true, offline: false, entries: merged };
         } catch (err) {
             console.warn('[DiariOffline] syncEntriesFromApi failed, using cache:', err);
             return { ok: false, offline: true, entries: readEntriesCache(), fromCache: true };
@@ -732,7 +775,9 @@
     }
 
     async function syncAll() {
-        if (!isOnline() || !isPwaStandalone()) return;
+        if (!isPwaStandalone()) return;
+        if (!isOnline()) return;
+        if (!(await probeReachability())) return;
         global.dispatchEvent(new CustomEvent('diari-offline-sync'));
         await flushPendingEntryCreates();
         await flushPendingEntryEdits();

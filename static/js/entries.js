@@ -48,6 +48,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeEntriesPagination();
     initializeEntriesResizeEmptyState();
     openEntriesDetailFromQuery();
+
+    window.addEventListener('diari-offline-sync-complete', () => {
+        initializeEntriesFromStorage({ preserveNavigation: true });
+    });
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();
