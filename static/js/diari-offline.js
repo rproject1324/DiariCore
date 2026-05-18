@@ -1409,8 +1409,17 @@
 
     function guardOfflineAuth() {
         const page = (global.location.pathname || '').split('/').pop() || 'login.html';
-        if (PUBLIC_PAGES.has(page)) return;
         const user = getSessionUser();
+        if (PUBLIC_PAGES.has(page)) {
+            if (
+                isPwaUiContext() &&
+                user?.isLoggedIn &&
+                (page === 'login.html' || page === 'index.html' || page === '')
+            ) {
+                global.location.replace(user.isAdmin ? 'admin' : 'dashboard.html');
+            }
+            return;
+        }
         if (user?.isLoggedIn) return;
         if (isOnline()) {
             global.location.href = 'login.html';

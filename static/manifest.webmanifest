@@ -3,7 +3,7 @@
   "name": "DiariCore",
   "short_name": "DiariCore",
   "description": "Your mindful journal — track emotions, write entries, and explore insights.",
-  "start_url": "/login.html",
+  "start_url": "/dashboard.html",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],

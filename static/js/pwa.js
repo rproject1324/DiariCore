@@ -227,9 +227,34 @@
         document.documentElement.setAttribute('data-diari-pwa', 'standalone');
     }
 
+    function syncThemeColorMeta() {
+        try {
+            const primary = getComputedStyle(document.documentElement)
+                .getPropertyValue('--primary-color')
+                .trim();
+            if (!primary) return;
+            let meta = document.querySelector('meta[name="theme-color"]');
+            if (!meta) {
+                meta = document.createElement('meta');
+                meta.name = 'theme-color';
+                document.head.appendChild(meta);
+            }
+            meta.content = primary;
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
     injectPwaHead();
     registerServiceWorker();
     bindInstallPrompt();
+
+    window.addEventListener('diari-palette-changed', syncThemeColorMeta);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', syncThemeColorMeta);
+    } else {
+        syncThemeColorMeta();
+    }
 
     window.DiariPWA = {
         isStandalone,
