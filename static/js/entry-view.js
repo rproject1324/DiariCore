@@ -109,6 +109,15 @@
         return list.find((e) => String(e?.id ?? '') === key) || null;
     }
 
+    function notifyPwaEntriesListRefresh() {
+        if (!isPwaOfflineContext()) return;
+        try {
+            window.dispatchEvent(new CustomEvent('diari-entries-cache-updated'));
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
     function replaceEntryInList(updated) {
         if (!updated) return;
         const uid = getUserId();
@@ -121,9 +130,11 @@
                     ...updated,
                     pwaEditPending: updated.pwaEditPending === true,
                     pwaDeletionPending: updated.pwaDeletionPending === true,
+                    pwaShowEdited: updated.pwaShowEdited === true,
                 },
                 uid
             );
+            notifyPwaEntriesListRefresh();
             return;
         }
         const list = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
@@ -2378,6 +2389,7 @@
                             ...data.entry,
                             pwaEditPending: false,
                             pwaDeletionPending: false,
+                            pwaShowEdited: true,
                         };
                         if (typeof window.DiariOffline?.removeEditQueueForEntry === 'function') {
                             window.DiariOffline.removeEditQueueForEntry(entryKey);
@@ -2409,6 +2421,7 @@
                         ...data.entry,
                         pwaEditPending: false,
                         pwaDeletionPending: false,
+                        pwaShowEdited: true,
                     };
                     if (typeof window.DiariOffline?.removeEditQueueForEntry === 'function') {
                         window.DiariOffline.removeEditQueueForEntry(entryKey);

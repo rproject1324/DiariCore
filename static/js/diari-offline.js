@@ -182,7 +182,7 @@
         if (entry.pwaDeletionPending === true) {
             return { text: 'Deletion Pending', kind: 'delete' };
         }
-        if (entry.pwaEditPending === true && hasQueuedEditForEntry(String(entry.id ?? ''))) {
+        if (entry.pwaEditPending === true) {
             return { text: 'Edit Pending', kind: 'edit' };
         }
         const id = String(entry.id ?? '');
@@ -235,6 +235,7 @@
             id: key || list[idx].id,
             pwaEditPending: true,
             pwaDeletionPending: false,
+            pwaShowEdited: false,
         };
         writeEntriesCache(list, userId);
         return list[idx];
@@ -557,7 +558,7 @@
             if (loc.pwaDeletionPending === true && hasQueuedDeleteForEntry(key)) {
                 return { ...s, pwaDeletionPending: true, pwaEditPending: false };
             }
-            if (loc.pwaEditPending === true && hasQueuedEditForEntry(key)) {
+            if (loc.pwaEditPending === true) {
                 return {
                     ...s,
                     title: loc.title ?? s.title,
@@ -676,6 +677,20 @@
                 patch.pwaDeletionPending = false;
                 patch.pendingServerAnalysis = false;
                 patch.moodScoringOffline = false;
+                if (isPwaUiContext()) {
+                    if (entry.pwaShowEdited === true) {
+                        patch.pwaShowEdited = true;
+                    } else {
+                        const u = entry.updatedAt ? new Date(entry.updatedAt).getTime() : NaN;
+                        const c = entry.createdAt
+                            ? new Date(entry.createdAt).getTime()
+                            : entry.date
+                              ? new Date(entry.date).getTime()
+                              : NaN;
+                        patch.pwaShowEdited =
+                            !Number.isNaN(u) && !Number.isNaN(c) && u > c + 1500;
+                    }
+                }
             }
             if (idx >= 0) list[idx] = { ...list[idx], ...patch };
             else list.unshift(patch);

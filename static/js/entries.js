@@ -103,9 +103,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     await syncEntriesFromApi();
     if (isPwaOfflineEntriesUi()) {
-        if (typeof window.DiariOffline?.sanitizeEntriesCachePwaFlags === 'function') {
-            window.DiariOffline.sanitizeEntriesCachePwaFlags();
-        }
         entriesPwaInitialSyncDone = true;
     }
     initializeEntriesFromStorage();
@@ -119,6 +116,9 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     if (isPwaOfflineEntriesUi()) {
         window.addEventListener('diari-offline-sync-complete', () => {
+            initializeEntriesFromStorage({ preserveNavigation: true });
+        });
+        window.addEventListener('diari-entries-cache-updated', () => {
             initializeEntriesFromStorage({ preserveNavigation: true });
         });
         window.addEventListener('online', () => {
@@ -559,6 +559,9 @@ function isEntryEditedForList(ent) {
     if (isPwaOfflineEntriesUi() && ent && (ent.pwaEditPending === true || ent.pwaDeletionPending === true)) {
         return false;
     }
+    if (isPwaOfflineEntriesUi() && ent && ent.pwaShowEdited === true) {
+        return true;
+    }
     if (!ent || !ent.updatedAt) return false;
     const u = new Date(ent.updatedAt).getTime();
     if (Number.isNaN(u)) return false;
@@ -585,12 +588,7 @@ function entrySyncPillHtml(entry) {
     if (!label) {
         if (entry.pwaDeletionPending === true) {
             label = { text: 'Deletion Pending', kind: 'delete' };
-        } else if (
-            entry.pwaEditPending === true &&
-            window.DiariOffline &&
-            typeof window.DiariOffline.hasQueuedEditForEntry === 'function' &&
-            window.DiariOffline.hasQueuedEditForEntry(String(entry.id ?? ''))
-        ) {
+        } else if (entry.pwaEditPending === true) {
             label = { text: 'Edit Pending', kind: 'edit' };
         } else {
             const id = String(entry.id ?? '');

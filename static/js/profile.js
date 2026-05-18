@@ -62,6 +62,8 @@ let profileEmailChangeOtpAutoVerifyTimeout = null;
 
 const PWA_OFFLINE_SAVED_MSG = 'Saved offline. Changes will sync automatically when connected.';
 const PWA_INTERNET_REQUIRED_MSG = 'Please connect to the internet and try again.';
+const PWA_PASSWORD_INTERNET_MSG =
+    'Please connect to the internet and try changing you password again.';
 
 function isPwaProfileContext() {
     if (window.DiariOffline && typeof window.DiariOffline.isPwaUiContext === 'function') {
@@ -80,6 +82,14 @@ async function isPwaOfflineForUserActions() {
 }
 
 function showPwaInternetRequiredToast() {
+    showNotification(PWA_INTERNET_REQUIRED_MSG, 'warning', 5000);
+}
+
+function showPwaPasswordInternetToast() {
+    showNotification(PWA_PASSWORD_INTERNET_MSG, 'warning', 5000);
+}
+
+function showPwaTotpInternetToast() {
     showNotification(PWA_INTERNET_REQUIRED_MSG, 'warning', 5000);
 }
 
@@ -1179,11 +1189,19 @@ function wireProfileTotpModal() {
 
     if (primary) {
         primary.addEventListener('click', function () {
+            void (async function () {
             const user = getStoredDiariUser();
             const uid = user && user.id != null ? Number(user.id) : 0;
             if (!uid) {
                 showNotification('Sign in to manage two-factor authentication.', 'warning');
                 close();
+                return;
+            }
+            if (await isPwaOfflineForUserActions()) {
+                showPwaTotpInternetToast();
+                if (primary.dataset.totpAction === 'setup-qr') setPrimaryShowQrCodeButton();
+                else if (primary.dataset.totpAction === 'setup-confirm') setPrimaryEnableTwoFaButton();
+                else setProfileTotpDisablePrimaryButton();
                 return;
             }
             const action = primary.dataset.totpAction || '';
@@ -1237,7 +1255,8 @@ function wireProfileTotpModal() {
                     })
                     .catch(function () {
                         setPrimaryShowQrCodeButton();
-                        showNotification('Could not reach the server.', 'error');
+                        if (isPwaProfileContext()) showPwaTotpInternetToast();
+                        else showNotification('Could not reach the server.', 'error');
                     });
                 return;
             }
@@ -1278,7 +1297,8 @@ function wireProfileTotpModal() {
                     .catch(function () {
                         setPrimaryEnableTwoFaButton();
                         refreshTotpSetupStepperVerifyPhase();
-                        showNotification('Could not reach the server.', 'error');
+                        if (isPwaProfileContext()) showPwaTotpInternetToast();
+                        else showNotification('Could not reach the server.', 'error');
                     });
                 return;
             }
@@ -1320,9 +1340,11 @@ function wireProfileTotpModal() {
                     .catch(function () {
                         primary.disabled = false;
                         setProfileTotpDisablePrimaryButton();
-                        showNotification('Could not reach the server.', 'error');
+                        if (isPwaProfileContext()) showPwaTotpInternetToast();
+                        else showNotification('Could not reach the server.', 'error');
                     });
             }
+            })();
         });
     }
 }
@@ -1680,10 +1702,16 @@ function savePersonalInfoForm() {
     const bday = (document.getElementById('profileFieldBirthday')?.value || '').trim();
 
     const saveBtn = document.getElementById('profilePersonalSaveBtn');
-    void Promise.all([
-        checkProfilePersonalAvailability('profileFieldNickname', nick),
-        checkProfilePersonalAvailability('profileFieldEmail', email),
-    ]).then(async function (results) {
+    void (async function () {
+        const offlineFirst = await isPwaOfflineForUserActions();
+        const availabilityChecks = offlineFirst
+            ? [Promise.resolve(true), Promise.resolve(true)]
+            : [
+                  checkProfilePersonalAvailability('profileFieldNickname', nick),
+                  checkProfilePersonalAvailability('profileFieldEmail', email),
+              ];
+        return Promise.all(availabilityChecks);
+    })().then(async function (results) {
         if (!results[0] || !results[1]) {
             refreshProfilePersonalSaveButton();
             showNotification('Username or email is not available.', 'warning');
@@ -2097,7 +2125,7 @@ async function submitProfilePasswordChangeRequest(isResend) {
         return false;
     }
     if (await isPwaOfflineForUserActions()) {
-        showPwaInternetRequiredToast();
+        showPwaPasswordInternetToast();
         return false;
     }
     if (!isPwaProfileContext() && !navigator.onLine) {
@@ -2545,6 +2573,16 @@ function initializeProfileInteractions() {
                     applyProfileOverviewAvatar(user);
                     document.dispatchEvent(new CustomEvent('diari-user-updated', { bubbles: true }));
 
+                    void (async function () {
+                        if (await isPwaOfflineForUserActions()) {
+                            showPwaSavedOfflineToast();
+                            const personalPanel = document.getElementById('profileSectionPersonalInfo');
+                            if (personalPanel && !personalPanel.hidden) {
+                                hydratePersonalInfoPanel();
+                            }
+                            return;
+                        }
+
                     const uid = Number(user.id ?? user.userId ?? 0);
                     if (Number.isInteger(uid) && uid > 0) {
                         fetch('/api/user/avatar', {
@@ -2569,14 +2607,18 @@ function initializeProfileInteractions() {
                                 }
                             })
                             .catch(function () {
-                                showNotification(
-                                    'Photo is saved on this device only. Could not sync to the server—try again when you are online.',
-                                    'warning'
-                                );
+                                if (isPwaProfileContext()) showPwaSavedOfflineToast();
+                                else {
+                                    showNotification(
+                                        'Photo is saved on this device only. Could not sync to the server—try again when you are online.',
+                                        'warning'
+                                    );
+                                }
                             });
                     } else {
                         showNotification('Profile photo updated.', 'success');
                     }
+                    })();
                 });
             });
     }
