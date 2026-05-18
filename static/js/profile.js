@@ -2757,6 +2757,9 @@ function initializeReminderTimePreference() {
                 localStorage.setItem(REMINDER_TIME_USER_OVERRIDE_KEY, this.value);
             }
         } catch (_) { /* ignore */ }
+        if (window.DiariPwaNotifications?.syncPrefsToWorker) {
+            void window.DiariPwaNotifications.syncPrefsToWorker();
+        }
     });
 }
 
@@ -3016,6 +3019,9 @@ function openProfileSection(sectionKey) {
 
     if (sectionKey === 'preferences') {
         hydrateProfileReminderTimeInput();
+        if (window.DiariPwaNotifications?.hydrateProfileNotificationUi) {
+            window.DiariPwaNotifications.hydrateProfileNotificationUi();
+        }
     }
     if (sectionKey === 'personal-information') {
         hydratePersonalInfoPanel();

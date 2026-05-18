@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v48';
+const CACHE_NAME = 'diaricore-pwa-v49';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -46,7 +46,21 @@ const PRECACHE_URLS = [
     '/lottie-web.min.js',
     '/mood-scoring.js',
     '/side-bar.js',
+    '/most-active-time.js',
+    '/pwa-notification-idb.js',
+    '/pwa-notification-templates.js',
+    '/pwa-notification-scheduler-sw.js',
 ];
+
+try {
+    importScripts(
+        '/pwa-notification-idb.js',
+        '/pwa-notification-templates.js',
+        '/pwa-notification-scheduler-sw.js'
+    );
+} catch (e) {
+    console.warn('[PWA] Notification scheduler scripts failed to load:', e);
+}
 
 const PRECACHE_URL_SET = new Set(PRECACHE_URLS);
 

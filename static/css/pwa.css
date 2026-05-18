@@ -1,3 +1,27 @@
+/* Browser tab: notifications are PWA-only */
+.pwa-notifications-browser-note {
+    margin: 0 0 1rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    background: var(--background-soft, #eef2f0);
+    border: 1px solid var(--border-color, #e0e6e3);
+}
+
+html:not(.diari-pwa-standalone):not([data-diari-pwa='standalone'])
+    .profile-prefs-card--notifications
+    .notifications-control
+    input,
+html:not(.diari-pwa-standalone):not([data-diari-pwa='standalone'])
+    .profile-prefs-card--notifications
+    .notifications-control
+    .toggle-switch {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
 /* PWA install banner — mobile & desktop */
 
 .pwa-install-banner {

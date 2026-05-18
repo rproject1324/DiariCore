@@ -222,9 +222,28 @@
         }
     }
 
+    function loadScriptOnce(src) {
+        if (document.querySelector('script[data-diari-src="' + src + '"]')) return;
+        const s = document.createElement('script');
+        s.src = src;
+        s.dataset.diariSrc = src;
+        document.head.appendChild(s);
+    }
+
+    function loadPwaNotificationStack() {
+        if (!isStandalone()) return;
+        [
+            'most-active-time.js',
+            'pwa-notification-idb.js',
+            'pwa-notification-templates.js',
+            'pwa-notifications.js',
+        ].forEach(loadScriptOnce);
+    }
+
     if (isStandalone()) {
         document.documentElement.classList.add('diari-pwa-standalone');
         document.documentElement.setAttribute('data-diari-pwa', 'standalone');
+        loadPwaNotificationStack();
     }
 
     function syncThemeColorMeta() {
