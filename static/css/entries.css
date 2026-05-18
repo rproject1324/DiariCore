@@ -937,13 +937,6 @@ html.entries-restore-detail #entriesDetailShell .entries-detail-loading-overlay 
     margin-top: 0.25rem;
 }
 
-.entry-mood {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-}
-
 .mood-emoji {
     font-size: 2rem;
     line-height: 1;
@@ -1310,6 +1303,7 @@ html.entries-restore-detail #entriesDetailShell .entries-detail-loading-overlay 
     
     .entry-mood {
         display: flex !important;
+        flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
         font-size: 0.8rem !important;
@@ -1318,6 +1312,7 @@ html.entries-restore-detail #entriesDetailShell .entries-detail-loading-overlay 
         position: relative !important;
         top: 0 !important;
         right: 0 !important;
+        gap: 0.25rem !important;
     }
     
     .entry-mood i {
@@ -1707,10 +1702,18 @@ html.entries-restore-detail #entriesDetailShell .entries-detail-loading-overlay 
         min-width: 0;
         display: inline-flex !important;
         flex-direction: row !important;
-        flex-wrap: wrap !important;
+        flex-wrap: nowrap !important;
         align-items: center !important;
         justify-content: flex-end !important;
         gap: 0.35rem !important;
+    }
+
+    .entries-section .entry-card .entry-mood .mood-label,
+    .entries-section .entry-card .entry-mood .entry-edited-pill {
+        display: inline-flex !important;
+        flex: 0 0 auto !important;
+        width: auto !important;
+        max-width: none !important;
     }
 
     .entries-section .entry-card .mood-label {
@@ -2103,4 +2106,45 @@ html.theme-dark.diari-pwa-standalone .entry-sync-pill--delete {
 html.theme-dark.diari-pwa-standalone .entry-card--deletion-pending {
     background: rgba(220, 80, 80, 0.16) !important;
     border-color: rgba(220, 80, 80, 0.38) !important;
+}
+
+/*
+ * Desktop browser only (≥769px): mood + Edited pills must stay side-by-side in the card header.
+ * Overrides base .entry-mood { flex-direction: column } which stacks pills vertically.
+ */
+@media (min-width: 769px) {
+    html:not(.diari-pwa-standalone):not([data-diari-pwa='standalone'])
+        body.page-entries
+        .entries-section
+        .entry-card
+        > .entry-content-wrapper
+        .entry-header
+        > .entry-mood {
+        display: inline-flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        gap: 0.35rem !important;
+        width: auto !important;
+        max-width: none !important;
+    }
+
+    html:not(.diari-pwa-standalone):not([data-diari-pwa='standalone'])
+        body.page-entries
+        .entries-section
+        .entry-card
+        .entry-mood
+        > .mood-label,
+    html:not(.diari-pwa-standalone):not([data-diari-pwa='standalone'])
+        body.page-entries
+        .entries-section
+        .entry-card
+        .entry-mood
+        > .entry-edited-pill {
+        display: inline-flex !important;
+        flex: 0 0 auto !important;
+        width: auto !important;
+        max-width: none !important;
+    }
 }
