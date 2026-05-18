@@ -2,7 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', function() {
     void (async function () {
-        if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
             await window.DiariOffline.syncAllForPageLoad();
             initializeEmotionalSupportFromData();
         }

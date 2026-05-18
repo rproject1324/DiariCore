@@ -101,7 +101,7 @@ function refreshDashboardFromSyncedStorage() {
 document.addEventListener('DOMContentLoaded', async function() {
     try {
     hydrateMoodKeyAnchors();
-    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad) {
+    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     } else {
         await syncEntriesFromApi();

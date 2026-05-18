@@ -11,7 +11,7 @@ function refreshProfileAfterPwaSync() {
 
 document.addEventListener('DOMContentLoaded', function() {
     void (async function () {
-        if (isPwaProfileContext() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
             await window.DiariOffline.syncAllForPageLoad();
             refreshProfileAfterPwaSync();
         }
@@ -23,14 +23,13 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeStorageActions();
     initializeProfileSectionNavigation();
     initializeAccountDetailPanels();
-    if (isPwaProfileContext()) {
-        window.addEventListener('diari-offline-sync-complete', refreshProfileAfterPwaSync);
-        window.addEventListener('offline', function () {
-            refreshProfilePersonalSaveButton();
-        });
-        if (window.DiariOffline?.wirePwaPageAutoSync) {
-            window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
-        }
+    window.addEventListener('diari-offline-sync-complete', refreshProfileAfterPwaSync);
+    window.addEventListener('diari-user-updated', refreshProfileAfterPwaSync);
+    window.addEventListener('offline', function () {
+        refreshProfilePersonalSaveButton();
+    });
+    if (window.DiariOffline?.wirePwaPageAutoSync) {
+        window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
     }
 });
 

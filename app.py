@@ -1023,6 +1023,18 @@ def api_user_totp_disable():
     return jsonify({"success": True, "user": serialize_user(row)}), 200
 
 
+@app.route("/api/user/me", methods=["GET"])
+def api_user_me():
+    """Return the signed-in user's profile for cross-device refresh sync."""
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
+    if auth_err:
+        return auth_err
+    row = db.get_user_by_id(user_id)
+    if not row:
+        return jsonify({"success": False, "error": "User not found."}), 404
+    return jsonify({"success": True, "user": serialize_user(row)}), 200
+
+
 @app.route("/api/user/avatar", methods=["POST"])
 def api_user_avatar():
     """Save or clear the signed-in user's profile photo (data URL stored server-side)."""

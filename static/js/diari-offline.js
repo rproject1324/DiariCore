@@ -146,13 +146,58 @@
 
     function writeEntriesCache(entries, userId) {
         try {
-            global.localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries));
+            const nextJson = JSON.stringify(entries);
+            const prevJson = global.localStorage.getItem(ENTRIES_KEY);
+            global.localStorage.setItem(ENTRIES_KEY, nextJson);
             if (userId) global.localStorage.setItem(ENTRIES_OWNER_KEY, String(userId));
+            if (prevJson !== nextJson) {
+                try {
+                    global.dispatchEvent(new CustomEvent('diari-entries-cache-updated'));
+                } catch (_) {
+                    /* ignore */
+                }
+            }
             return true;
         } catch (e) {
             console.warn('[DiariOffline] Failed to write entries cache:', e);
             return false;
         }
+    }
+
+    function mergeServerUserIntoLocal(serverUser) {
+        if (!serverUser || typeof serverUser !== 'object') return false;
+        const prev = getSessionUser() || {};
+        const merged = Object.assign({}, prev, serverUser, {
+            isLoggedIn: prev.isLoggedIn !== false,
+            loginTime: prev.loginTime || null,
+            id: serverUser.id ?? prev.id,
+            userId: serverUser.id ?? prev.userId ?? prev.id,
+        });
+        if (hasPwaPendingAvatar()) {
+            const pendingAv = readPwaPendingAvatar();
+            if (pendingAv) merged.avatarDataUrl = pendingAv;
+        }
+        if (hasPwaPendingUiPrefs()) {
+            const prefs = readPwaPendingUiPrefs();
+            if (prefs && prefs.uiTheme) merged.uiTheme = prefs.uiTheme;
+            if (prefs && prefs.uiPaletteId) merged.uiPaletteId = prefs.uiPaletteId;
+        }
+        if (hasPwaPendingProfile()) {
+            const pending = readPwaPendingProfile();
+            if (pending && typeof pending === 'object') {
+                Object.assign(merged, pending);
+            }
+        }
+        const prevJson = JSON.stringify(prev);
+        const nextJson = JSON.stringify(merged);
+        if (prevJson === nextJson) return false;
+        global.localStorage.setItem(USER_KEY, nextJson);
+        try {
+            global.dispatchEvent(new CustomEvent('diari-user-updated', { bubbles: true }));
+        } catch (_) {
+            /* ignore */
+        }
+        return true;
     }
 
     function isOfflineLocalEntry(entry) {
@@ -1109,6 +1154,49 @@
         }
     }
 
+    async function syncUserFromApi(options = {}) {
+        const userId = getUserId();
+        if (!userId) {
+            return { ok: false, offline: !isOnline(), fromCache: true };
+        }
+
+        const skipProbe = options.skipReachabilityProbe === true;
+        const trustNav = options.trustNavigatorOnline === true;
+
+        let reachable = false;
+        if (isOnline()) {
+            if (skipProbe || trustNav) {
+                reachable = true;
+            } else {
+                reachable = isPwaUiContext() ? await probeReachability() : true;
+            }
+        }
+        if (!reachable) {
+            return { ok: true, offline: true, fromCache: true };
+        }
+
+        try {
+            const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+            const response = await fetchFn('/api/user/me?dc=' + Date.now(), {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+            });
+            const result = await response.json().catch(() => ({}));
+            if (response.status === 401) {
+                return { ok: false, offline: false };
+            }
+            if (!response.ok || !result.success || !result.user) {
+                return { ok: false, offline: false, fromCache: true };
+            }
+            mergeServerUserIntoLocal(result.user);
+            return { ok: true, offline: false };
+        } catch (err) {
+            console.warn('[DiariOffline] syncUserFromApi failed, using cache:', err);
+            return { ok: false, offline: true, fromCache: true };
+        }
+    }
+
     async function flushPendingEntryCreates() {
         if (!isOnline()) return;
         const userId = getUserId();
@@ -1259,6 +1347,10 @@
                 skipReachabilityProbe: true,
                 trustNavigatorOnline: trustNav,
             });
+            await syncUserFromApi({
+                skipReachabilityProbe: true,
+                trustNavigatorOnline: trustNav,
+            });
             global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
             return { ok: true };
         })()
@@ -1278,54 +1370,86 @@
         return syncAll(options);
     }
 
+    let syncPageLoadPromise = null;
+
     /**
-     * Full offline flush + server refresh — call on each authenticated PWA page load / refresh when online.
+     * Pull latest user + entries from server (and flush PWA queues when applicable).
+     * Call before rendering authenticated pages and on refresh / tab revisit when online.
      */
     async function syncAllForPageLoad(options = {}) {
+        const userId = getUserId();
+        if (!userId || !isOnline()) {
+            return { ok: false, reason: 'offline-or-anon' };
+        }
+
+        if (syncPageLoadPromise) return syncPageLoadPromise;
+
         if (!isPwaUiContext()) {
-            const userId = getUserId();
-            if (userId && isOnline()) {
-                return syncEntriesFromApi({ trustNavigatorOnline: true });
-            }
-            return { ok: true, skipped: true, reason: 'not-pwa' };
-        }
-        if (!isOnline()) {
-            return { ok: false, reason: 'offline' };
+            syncPageLoadPromise = (async () => {
+                const syncOpts = { trustNavigatorOnline: true };
+                await Promise.all([
+                    syncUserFromApi(syncOpts),
+                    syncEntriesFromApi(syncOpts),
+                ]);
+                try {
+                    global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
+                } catch (_) {
+                    /* ignore */
+                }
+                return { ok: true };
+            })()
+                .catch((e) => {
+                    console.warn('[DiariOffline] syncAllForPageLoad failed:', e);
+                    return { ok: false, reason: 'error' };
+                })
+                .finally(() => {
+                    syncPageLoadPromise = null;
+                });
+            return syncPageLoadPromise;
         }
 
-        const maxAttempts = Number(options.maxAttempts) > 0 ? Number(options.maxAttempts) : 4;
-        const syncOpts = { trustNavigatorOnline: true };
-        let lastResult = { ok: false };
+        syncPageLoadPromise = (async () => {
+            const maxAttempts = Number(options.maxAttempts) > 0 ? Number(options.maxAttempts) : 4;
+            const syncOpts = { trustNavigatorOnline: true };
+            let lastResult = { ok: false };
 
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            lastResult = await syncAll(syncOpts);
-            let pending = false;
-            try {
-                pending = await hasPendingOfflineWorkAsync();
-            } catch {
-                pending = hasPendingOfflineWork();
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                lastResult = await syncAll(syncOpts);
+                let pending = false;
+                try {
+                    pending = await hasPendingOfflineWorkAsync();
+                } catch {
+                    pending = hasPendingOfflineWork();
+                }
+                if (lastResult?.ok && !pending) {
+                    return lastResult;
+                }
+                if (!pending && navigator.onLine !== false) {
+                    return lastResult;
+                }
+                if (navigator.onLine === false) {
+                    break;
+                }
+                if (attempt < maxAttempts - 1) {
+                    await new Promise((r) => global.setTimeout(r, 900 * (attempt + 1)));
+                }
             }
-            if (lastResult?.ok && !pending) {
-                return lastResult;
-            }
-            if (!pending && navigator.onLine !== false) {
-                return lastResult;
-            }
-            if (navigator.onLine === false) {
-                break;
-            }
-            if (attempt < maxAttempts - 1) {
-                await new Promise((r) => global.setTimeout(r, 900 * (attempt + 1)));
-            }
-        }
-        return lastResult;
+            return lastResult;
+        })()
+            .catch((e) => {
+                console.warn('[DiariOffline] syncAllForPageLoad (PWA) failed:', e);
+                return { ok: false, reason: 'error' };
+            })
+            .finally(() => {
+                syncPageLoadPromise = null;
+            });
+        return syncPageLoadPromise;
     }
 
     /**
      * Re-run sync when the app returns online or the user revisits a tab; optional UI refresh callback.
      */
     function wirePwaPageAutoSync(onRefresh) {
-        if (!isPwaUiContext()) return;
         const refresh =
             typeof onRefresh === 'function'
                 ? onRefresh
@@ -1536,7 +1660,33 @@
     }
 
     let connectivityWatchStarted = false;
+    let remoteStateWatchStarted = false;
     let pwaLastReachable = null;
+
+    function currentAppPageName() {
+        const path = (global.location.pathname || '').split('/').pop() || '';
+        return path || 'index.html';
+    }
+
+    function isAuthenticatedAppPage() {
+        return getUserId() > 0 && !PUBLIC_PAGES.has(currentAppPageName());
+    }
+
+    function startRemoteStateWatch() {
+        if (remoteStateWatchStarted) return;
+        remoteStateWatchStarted = true;
+
+        const kick = () => {
+            if (!isAuthenticatedAppPage() || !isOnline()) return;
+            void syncAllForPageLoad();
+        };
+
+        global.addEventListener('pageshow', kick);
+        global.addEventListener('online', kick);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') kick();
+        });
+    }
 
     function startPwaConnectivityWatch() {
         if (connectivityWatchStarted || !isPwaUiContext()) return;
@@ -1595,10 +1745,12 @@
 
     function init() {
         ensurePwaDocumentMarkers();
-        if (!isPwaUiContext()) return;
-        guardOfflineAuth();
-        startPwaConnectivityWatch();
-        if (isOnline()) {
+        if (isPwaUiContext()) {
+            guardOfflineAuth();
+            startPwaConnectivityWatch();
+        }
+        startRemoteStateWatch();
+        if (isAuthenticatedAppPage() && isOnline()) {
             void syncAllForPageLoad();
         }
     }
@@ -1630,6 +1782,7 @@
         flushPwaAvatarPending,
         flushPwaUiPrefsPending,
         syncAllForPageLoad,
+        mergeServerUserIntoLocal,
         wirePwaPageAutoSync,
         sanitizeEntriesCachePwaFlags,
         markEntryEditPendingInCache,
@@ -1642,6 +1795,7 @@
         writeEntriesCache,
         mergeEntryIntoCache,
         syncEntriesFromApi,
+        syncUserFromApi,
         syncAll,
         analyzeTextLocally,
         analyzeForOffline,

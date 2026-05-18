@@ -2,7 +2,7 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
     }
 
@@ -2380,7 +2380,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         },
         true
     );
-    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.wirePwaPageAutoSync) {
+    if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(async () => {
             flushTagSyncQueue();
             await syncUserTagsIntoUI();

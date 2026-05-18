@@ -151,7 +151,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 async function syncEntriesFromApi() {
-    if (isPwaOfflineEntriesUi() && typeof window.DiariOffline?.syncAllForPageLoad === 'function') {
+    if (typeof window.DiariOffline?.syncAllForPageLoad === 'function' && navigator.onLine !== false) {
         await window.DiariOffline.syncAllForPageLoad();
         return;
     }
