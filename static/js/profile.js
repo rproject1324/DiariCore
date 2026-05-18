@@ -1,6 +1,22 @@
 // DiariCore Profile Page JavaScript
 
+function refreshProfileAfterPwaSync() {
+    initializeProfileFromStorage();
+    hydratePersonalInfoPanel();
+    if (window.DiariTheme && typeof window.DiariTheme.syncToggleState === 'function') {
+        window.DiariTheme.syncToggleState();
+    }
+    refreshProfilePersonalSaveButton();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    void (async function () {
+        if (isPwaProfileContext() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+            await window.DiariOffline.syncAllForPageLoad();
+            refreshProfileAfterPwaSync();
+        }
+    })();
+
     initializeProfileInteractions();
     initializePreferenceToggles();
     initializeReminderTimePreference();
@@ -8,21 +24,13 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeProfileSectionNavigation();
     initializeAccountDetailPanels();
     if (isPwaProfileContext()) {
-        window.addEventListener('diari-offline-sync-complete', function () {
-            hydratePersonalInfoPanel();
-            if (window.DiariTheme && typeof window.DiariTheme.syncToggleState === 'function') {
-                window.DiariTheme.syncToggleState();
-            }
-        });
-        window.addEventListener('online', function () {
-            refreshProfilePersonalSaveButton();
-            if (window.DiariOffline?.requestPwaSync) {
-                void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
-            }
-        });
+        window.addEventListener('diari-offline-sync-complete', refreshProfileAfterPwaSync);
         window.addEventListener('offline', function () {
             refreshProfilePersonalSaveButton();
         });
+        if (window.DiariOffline?.wirePwaPageAutoSync) {
+            window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
+        }
     }
 });
 
@@ -2631,6 +2639,9 @@ function initializeProfileInteractions() {
 
                     void (async function () {
                         if (await isPwaOfflineForUserActions()) {
+                            if (window.DiariOffline?.savePwaAvatarPending) {
+                                window.DiariOffline.savePwaAvatarPending(dataUrl);
+                            }
                             showPwaSavedOfflineToast();
                             const personalPanel = document.getElementById('profileSectionPersonalInfo');
                             if (personalPanel && !personalPanel.hidden) {

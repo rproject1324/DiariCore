@@ -137,6 +137,11 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         });
         startPwaEntriesConnectivityWatch();
+        if (typeof window.DiariOffline?.wirePwaPageAutoSync === 'function') {
+            window.DiariOffline.wirePwaPageAutoSync(() => {
+                initializeEntriesFromStorage({ preserveNavigation: true });
+            });
+        }
     }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
@@ -146,35 +151,12 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 async function syncEntriesFromApi() {
-    if (!isPwaOfflineEntriesUi()) {
-        if (window.DiariOffline?.syncEntriesFromApi) {
-            await window.DiariOffline.syncEntriesFromApi();
-        }
+    if (isPwaOfflineEntriesUi() && typeof window.DiariOffline?.syncAllForPageLoad === 'function') {
+        await window.DiariOffline.syncAllForPageLoad();
         return;
     }
-    if (typeof window.DiariOffline?.syncAll !== 'function') {
-        if (window.DiariOffline?.syncEntriesFromApi) {
-            await window.DiariOffline.syncEntriesFromApi();
-        }
-        return;
-    }
-
-    const syncOpts = { trustNavigatorOnline: true };
-
-    for (let attempt = 0; attempt < 4; attempt++) {
-        const result = await window.DiariOffline.syncAll(syncOpts);
-        let pending = false;
-        if (typeof window.DiariOffline.hasPendingOfflineWorkAsync === 'function') {
-            pending = await window.DiariOffline.hasPendingOfflineWorkAsync();
-        } else if (typeof window.DiariOffline.hasPendingOfflineWork === 'function') {
-            pending = window.DiariOffline.hasPendingOfflineWork();
-        }
-        if (result?.ok && !pending) break;
-        if (!pending && navigator.onLine !== false) break;
-        if (navigator.onLine === false) break;
-        if (attempt < 3) {
-            await new Promise((r) => window.setTimeout(r, 900 * (attempt + 1)));
-        }
+    if (window.DiariOffline?.syncEntriesFromApi) {
+        await window.DiariOffline.syncEntriesFromApi();
     }
 }
 

@@ -2,6 +2,10 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
+    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        await window.DiariOffline.syncAllForPageLoad();
+    }
+
     // Initialize variables
     let selectedFeeling = null;
     let selectedTags = new Set();
@@ -2376,6 +2380,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         },
         true
     );
+    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.wirePwaPageAutoSync) {
+        window.DiariOffline.wirePwaPageAutoSync(async () => {
+            flushTagSyncQueue();
+            await syncUserTagsIntoUI();
+        });
+    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

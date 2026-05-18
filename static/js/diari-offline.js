@@ -18,6 +18,7 @@
     const ENTRY_DELETE_QUEUE_KEY = 'diariCoreEntryDeleteQueue';
     const PWA_PENDING_PROFILE_KEY = 'diariCorePwaPendingProfile';
     const PWA_PENDING_UI_PREFS_KEY = 'diariCorePwaPendingUiPrefs';
+    const PWA_PENDING_AVATAR_KEY = 'diariCorePwaPendingAvatar';
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -446,6 +447,33 @@
         return !!(p && (p.uiTheme || p.uiPaletteId));
     }
 
+    function readPwaPendingAvatar() {
+        try {
+            const raw = global.localStorage.getItem(PWA_PENDING_AVATAR_KEY);
+            return raw && String(raw).trim() ? String(raw).trim() : '';
+        } catch {
+            return '';
+        }
+    }
+
+    function writePwaPendingAvatar(dataUrl) {
+        if (!dataUrl || !String(dataUrl).trim()) {
+            global.localStorage.removeItem(PWA_PENDING_AVATAR_KEY);
+            return;
+        }
+        global.localStorage.setItem(PWA_PENDING_AVATAR_KEY, String(dataUrl).trim());
+    }
+
+    function hasPwaPendingAvatar() {
+        return readPwaPendingAvatar().length > 0;
+    }
+
+    function savePwaAvatarPending(avatarDataUrl) {
+        if (!isPwaUiContext() || !avatarDataUrl) return;
+        writePwaPendingAvatar(avatarDataUrl);
+        mergePwaProfileIntoUser({ avatarDataUrl: String(avatarDataUrl).trim() });
+    }
+
     function mergePwaProfileIntoUser(patch) {
         if (!patch || typeof patch !== 'object') return;
         try {
@@ -502,6 +530,31 @@
             writePwaPendingProfile(null);
         } catch (e) {
             console.warn('[DiariOffline] PWA profile sync failed:', e);
+        }
+    }
+
+    async function flushPwaAvatarPending() {
+        if (!isOnline() || !isPwaUiContext()) return;
+        const dataUrl = readPwaPendingAvatar();
+        if (!dataUrl) return;
+        const userId = getUserId();
+        if (!userId) return;
+        const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
+        try {
+            const res = await fetchFn('/api/user/avatar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId, avatarDataUrl: dataUrl }),
+                credentials: 'same-origin',
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Avatar sync failed');
+            }
+            if (data.user) mergePwaProfileIntoUser(data.user);
+            writePwaPendingAvatar(null);
+        } catch (e) {
+            console.warn('[DiariOffline] PWA avatar sync failed:', e);
         }
     }
 
@@ -1198,6 +1251,7 @@
             await flushPendingEntryDeletes();
             await flushTagSyncQueue();
             await flushPwaProfilePending();
+            await flushPwaAvatarPending();
             await flushPwaUiPrefsPending();
             sanitizeEntriesCachePwaFlags();
             await reanalyzeCachedFallbackEntries();
@@ -1222,6 +1276,76 @@
     function requestPwaSync(options = {}) {
         if (!isPwaUiContext()) return Promise.resolve({ ok: false, reason: 'not-pwa' });
         return syncAll(options);
+    }
+
+    /**
+     * Full offline flush + server refresh — call on each authenticated PWA page load / refresh when online.
+     */
+    async function syncAllForPageLoad(options = {}) {
+        if (!isPwaUiContext()) {
+            const userId = getUserId();
+            if (userId && isOnline()) {
+                return syncEntriesFromApi({ trustNavigatorOnline: true });
+            }
+            return { ok: true, skipped: true, reason: 'not-pwa' };
+        }
+        if (!isOnline()) {
+            return { ok: false, reason: 'offline' };
+        }
+
+        const maxAttempts = Number(options.maxAttempts) > 0 ? Number(options.maxAttempts) : 4;
+        const syncOpts = { trustNavigatorOnline: true };
+        let lastResult = { ok: false };
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            lastResult = await syncAll(syncOpts);
+            let pending = false;
+            try {
+                pending = await hasPendingOfflineWorkAsync();
+            } catch {
+                pending = hasPendingOfflineWork();
+            }
+            if (lastResult?.ok && !pending) {
+                return lastResult;
+            }
+            if (!pending && navigator.onLine !== false) {
+                return lastResult;
+            }
+            if (navigator.onLine === false) {
+                break;
+            }
+            if (attempt < maxAttempts - 1) {
+                await new Promise((r) => global.setTimeout(r, 900 * (attempt + 1)));
+            }
+        }
+        return lastResult;
+    }
+
+    /**
+     * Re-run sync when the app returns online or the user revisits a tab; optional UI refresh callback.
+     */
+    function wirePwaPageAutoSync(onRefresh) {
+        if (!isPwaUiContext()) return;
+        const refresh =
+            typeof onRefresh === 'function'
+                ? onRefresh
+                : null;
+
+        if (refresh) {
+            global.addEventListener('diari-offline-sync-complete', refresh);
+            global.addEventListener('diari-user-updated', refresh);
+        }
+
+        const kick = () => {
+            if (!isOnline()) return;
+            void syncAllForPageLoad();
+        };
+
+        global.addEventListener('online', kick);
+        global.addEventListener('pageshow', kick);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') kick();
+        });
     }
 
     async function flushPendingEntryEdits() {
@@ -1396,6 +1520,7 @@
         if (readDeleteQueue().length > 0) return true;
         if (readOfflineCreateQueueLs().length > 0) return true;
         if (hasPwaPendingProfile()) return true;
+        if (hasPwaPendingAvatar()) return true;
         if (hasPwaPendingUiPrefs()) return true;
         return readEntriesCache().some((e) => isOfflineLocalEntry(e));
     }
@@ -1474,7 +1599,7 @@
         guardOfflineAuth();
         startPwaConnectivityWatch();
         if (isOnline()) {
-            void requestPwaSync({ trustNavigatorOnline: true });
+            void syncAllForPageLoad();
         }
     }
 
@@ -1496,11 +1621,16 @@
         hasQueuedEditForEntry,
         removeEditQueueForEntry,
         savePwaProfilePending,
+        savePwaAvatarPending,
         savePwaUiPrefsPending,
         hasPwaPendingProfile,
+        hasPwaPendingAvatar,
         hasPwaPendingUiPrefs,
         flushPwaProfilePending,
+        flushPwaAvatarPending,
         flushPwaUiPrefsPending,
+        syncAllForPageLoad,
+        wirePwaPageAutoSync,
         sanitizeEntriesCachePwaFlags,
         markEntryEditPendingInCache,
         upsertEditQueueRecord,

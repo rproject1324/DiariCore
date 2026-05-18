@@ -1,6 +1,12 @@
 // DiariCore Suggestions Page JavaScript
 
 document.addEventListener('DOMContentLoaded', function() {
+    void (async function () {
+        if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+            await window.DiariOffline.syncAllForPageLoad();
+            initializeEmotionalSupportFromData();
+        }
+    })();
     try {
     initializeEmotionalSupportFromData();
     // Initialize components
@@ -9,6 +15,9 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeInteractiveElements();
     animateProgressBars();
     initializeMobileCarousel();
+    if (window.DiariOffline?.wirePwaPageAutoSync) {
+        window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
+    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

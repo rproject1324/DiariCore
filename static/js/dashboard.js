@@ -94,11 +94,19 @@ const DASHBOARD_INSIGHT_LOW = [
     "You're going through a tougher stretch. One gentle routine can help you stabilize.",
 ];
 
+function refreshDashboardFromSyncedStorage() {
+    initializeDashboardFromUserData();
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
     try {
     hydrateMoodKeyAnchors();
-    await syncEntriesFromApi();
-    initializeDashboardFromUserData();
+    if (window.DiariOffline?.isPwaUiContext?.() && window.DiariOffline?.syncAllForPageLoad) {
+        await window.DiariOffline.syncAllForPageLoad();
+    } else {
+        await syncEntriesFromApi();
+    }
+    refreshDashboardFromSyncedStorage();
     initializeGreetingClock();
     initializeStreakBook();
     
@@ -165,6 +173,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
 
     if (window.DiariChartFlow) DiariChartFlow.decorateChartContainers(document);
+
+    if (window.DiariOffline?.wirePwaPageAutoSync) {
+        window.DiariOffline.wirePwaPageAutoSync(refreshDashboardFromSyncedStorage);
+    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

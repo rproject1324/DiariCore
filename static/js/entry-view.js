@@ -2581,6 +2581,13 @@
                 window.location.href = 'entries.html';
                 return;
             }
+            if (
+                window.DiariOffline?.isPwaUiContext?.() &&
+                window.DiariOffline?.syncAllForPageLoad &&
+                navigator.onLine !== false
+            ) {
+                await window.DiariOffline.syncAllForPageLoad();
+            }
             await mount({
                 entryId: id,
                 onLeavePanel: () => {
