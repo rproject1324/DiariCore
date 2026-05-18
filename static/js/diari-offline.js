@@ -1102,6 +1102,15 @@
         };
     }
 
+    function notifyRemoteStateRefresh() {
+        try {
+            global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
+            global.dispatchEvent(new CustomEvent('diari-remote-state-refreshed'));
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
     async function syncEntriesFromApi(options = {}) {
         const userId = getUserId();
         if (!userId) {
@@ -1113,6 +1122,10 @@
         const cacheOwner = global.localStorage.getItem(ENTRIES_OWNER_KEY);
         if (cacheOwner && cacheOwner !== String(userId)) {
             global.localStorage.setItem(ENTRIES_KEY, '[]');
+        }
+
+        if (isPwaUiContext()) {
+            sanitizeEntriesCachePwaFlags();
         }
 
         const skipProbe = options.skipReachabilityProbe === true;
@@ -1351,7 +1364,7 @@
                 skipReachabilityProbe: true,
                 trustNavigatorOnline: trustNav,
             });
-            global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
+            notifyRemoteStateRefresh();
             return { ok: true };
         })()
             .catch((e) => {
@@ -1391,11 +1404,7 @@
                     syncUserFromApi(syncOpts),
                     syncEntriesFromApi(syncOpts),
                 ]);
-                try {
-                    global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
-                } catch (_) {
-                    /* ignore */
-                }
+                notifyRemoteStateRefresh();
                 return { ok: true };
             })()
                 .catch((e) => {
@@ -1430,10 +1439,11 @@
                 if (navigator.onLine === false) {
                     break;
                 }
-                if (attempt < maxAttempts - 1) {
-                    await new Promise((r) => global.setTimeout(r, 900 * (attempt + 1)));
-                }
+            if (attempt < maxAttempts - 1) {
+                await new Promise((r) => global.setTimeout(r, 900 * (attempt + 1)));
             }
+        }
+            notifyRemoteStateRefresh();
             return lastResult;
         })()
             .catch((e) => {
@@ -1462,7 +1472,9 @@
 
         const kick = () => {
             if (!isOnline()) return;
-            void syncAllForPageLoad();
+            void syncAllForPageLoad().then(() => {
+                if (refresh) refresh();
+            });
         };
 
         global.addEventListener('online', kick);

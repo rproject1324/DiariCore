@@ -1,12 +1,15 @@
 // DiariCore Suggestions Page JavaScript
 
-document.addEventListener('DOMContentLoaded', function() {
-    void (async function () {
-        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
-            await window.DiariOffline.syncAllForPageLoad();
-            initializeEmotionalSupportFromData();
-        }
-    })();
+document.addEventListener('DOMContentLoaded', async function() {
+    window.addEventListener('diari-offline-sync-complete', initializeEmotionalSupportFromData);
+    window.addEventListener('diari-remote-state-refreshed', initializeEmotionalSupportFromData);
+    if (window.DiariOffline?.wirePwaPageAutoSync) {
+        window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
+    }
+
+    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        await window.DiariOffline.syncAllForPageLoad();
+    }
     try {
     initializeEmotionalSupportFromData();
     // Initialize components
@@ -15,9 +18,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeInteractiveElements();
     animateProgressBars();
     initializeMobileCarousel();
-    if (window.DiariOffline?.wirePwaPageAutoSync) {
-        window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
-    }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

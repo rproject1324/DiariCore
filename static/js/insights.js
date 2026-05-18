@@ -324,6 +324,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     if (window.DiariChartFlow) DiariChartFlow.decorateChartContainers(document);
 
+    window.addEventListener('diari-remote-state-refreshed', refreshInsightsFromSyncedStorage);
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshInsightsFromSyncedStorage);
     }

@@ -2556,28 +2556,40 @@
         },
     };
 
+    async function bootstrapEntryViewPage() {
+        if (!document.body.classList.contains('page-entry-view')) return;
+        const id = parseQueryId();
+        const uid = getUserId();
+        if (!id || !uid) {
+            window.location.href = 'entries.html';
+            return;
+        }
+        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+            await window.DiariOffline.syncAllForPageLoad();
+        }
+        await mount({
+            entryId: id,
+            onLeavePanel: () => {
+                window.location.href = 'entries.html';
+            },
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
         try {
-            if (!document.body.classList.contains('page-entry-view')) return;
-            const id = parseQueryId();
-            const uid = getUserId();
-            if (!id || !uid) {
-                window.location.href = 'entries.html';
-                return;
-            }
-            if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
-                await window.DiariOffline.syncAllForPageLoad();
-            }
-            await mount({
-                entryId: id,
-                onLeavePanel: () => {
-                    window.location.href = 'entries.html';
-                },
-            });
+            await bootstrapEntryViewPage();
         } finally {
             if (window.DiariShell && typeof window.DiariShell.release === 'function') {
                 window.DiariShell.release();
             }
+        }
+    });
+
+    window.addEventListener('pageshow', (event) => {
+        if (!document.body.classList.contains('page-entry-view')) return;
+        if (navigator.onLine === false) return;
+        if (event && event.persisted) {
+            void bootstrapEntryViewPage();
         }
     });
 })(typeof window !== 'undefined' ? window : this);

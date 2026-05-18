@@ -9,21 +9,9 @@ function refreshProfileAfterPwaSync() {
     refreshProfilePersonalSaveButton();
 }
 
-document.addEventListener('DOMContentLoaded', function() {
-    void (async function () {
-        if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
-            await window.DiariOffline.syncAllForPageLoad();
-            refreshProfileAfterPwaSync();
-        }
-    })();
-
-    initializeProfileInteractions();
-    initializePreferenceToggles();
-    initializeReminderTimePreference();
-    initializeStorageActions();
-    initializeProfileSectionNavigation();
-    initializeAccountDetailPanels();
+document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('diari-offline-sync-complete', refreshProfileAfterPwaSync);
+    window.addEventListener('diari-remote-state-refreshed', refreshProfileAfterPwaSync);
     window.addEventListener('diari-user-updated', refreshProfileAfterPwaSync);
     window.addEventListener('offline', function () {
         refreshProfilePersonalSaveButton();
@@ -31,6 +19,18 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
     }
+
+    if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
+        await window.DiariOffline.syncAllForPageLoad();
+    }
+    refreshProfileAfterPwaSync();
+
+    initializeProfileInteractions();
+    initializePreferenceToggles();
+    initializeReminderTimePreference();
+    initializeStorageActions();
+    initializeProfileSectionNavigation();
+    initializeAccountDetailPanels();
 });
 
 let profileSecPwLiveInst = null;
@@ -3196,7 +3196,7 @@ function getNotificationColor(type) {
 }
 
 if (document.body && document.body.classList.contains('page-profile')) {
-    initializeProfileFromStorage();
+    /* Profile fields hydrate after sync in DOMContentLoaded (refresh + first load). */
 } else if (window.DiariShell && typeof window.DiariShell.release === 'function') {
     window.DiariShell.release();
 } else {

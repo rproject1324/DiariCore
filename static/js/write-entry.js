@@ -2380,12 +2380,28 @@ document.addEventListener('DOMContentLoaded', async function () {
         },
         true
     );
+    const refreshWriteEntryFromSyncedStorage = async () => {
+        flushTagSyncQueue();
+        await syncUserTagsIntoUI();
+    };
+
+    window.addEventListener('diari-remote-state-refreshed', () => {
+        void refreshWriteEntryFromSyncedStorage();
+    });
+
     if (window.DiariOffline?.wirePwaPageAutoSync) {
-        window.DiariOffline.wirePwaPageAutoSync(async () => {
-            flushTagSyncQueue();
-            await syncUserTagsIntoUI();
-        });
+        window.DiariOffline.wirePwaPageAutoSync(refreshWriteEntryFromSyncedStorage);
     }
+
+    window.addEventListener('pageshow', () => {
+        if (navigator.onLine === false) return;
+        void (async () => {
+            if (window.DiariOffline?.syncAllForPageLoad) {
+                await window.DiariOffline.syncAllForPageLoad();
+            }
+            await refreshWriteEntryFromSyncedStorage();
+        })();
+    });
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

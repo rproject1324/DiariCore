@@ -174,6 +174,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     if (window.DiariChartFlow) DiariChartFlow.decorateChartContainers(document);
 
+    window.addEventListener('diari-remote-state-refreshed', refreshDashboardFromSyncedStorage);
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshDashboardFromSyncedStorage);
     }

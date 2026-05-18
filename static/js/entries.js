@@ -117,19 +117,33 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeEntriesResizeEmptyState();
     openEntriesDetailFromQuery();
 
+    const refreshEntriesFromSyncedStorage = () => {
+        initializeEntriesFromStorage({ preserveNavigation: true });
+        void syncEntriesFilterTagsFromApi();
+    };
+
+    window.addEventListener('diari-offline-sync-complete', refreshEntriesFromSyncedStorage);
+    window.addEventListener('diari-remote-state-refreshed', refreshEntriesFromSyncedStorage);
+    window.addEventListener('diari-entries-cache-updated', refreshEntriesFromSyncedStorage);
+
+    window.addEventListener('pageshow', () => {
+        if (navigator.onLine === false) return;
+        void (async () => {
+            if (typeof window.DiariOffline?.syncAllForPageLoad === 'function') {
+                await window.DiariOffline.syncAllForPageLoad();
+            }
+            refreshEntriesFromSyncedStorage();
+        })();
+    });
+
+    if (typeof window.DiariOffline?.wirePwaPageAutoSync === 'function') {
+        window.DiariOffline.wirePwaPageAutoSync(refreshEntriesFromSyncedStorage);
+    }
+
     if (isPwaOfflineEntriesUi()) {
-        window.addEventListener('diari-offline-sync-complete', () => {
-            initializeEntriesFromStorage({ preserveNavigation: true });
-        });
-        window.addEventListener('diari-entries-cache-updated', () => {
-            initializeEntriesFromStorage({ preserveNavigation: true });
-        });
         window.addEventListener('online', () => {
             entriesPwaReachable = null;
             void runPwaEntriesSyncNow();
-        });
-        window.addEventListener('pageshow', () => {
-            if (entriesPwaInitialSyncDone) void runPwaEntriesSyncNow();
         });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && entriesPwaInitialSyncDone) {
@@ -137,11 +151,6 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         });
         startPwaEntriesConnectivityWatch();
-        if (typeof window.DiariOffline?.wirePwaPageAutoSync === 'function') {
-            window.DiariOffline.wirePwaPageAutoSync(() => {
-                initializeEntriesFromStorage({ preserveNavigation: true });
-            });
-        }
     }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
