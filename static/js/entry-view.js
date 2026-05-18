@@ -2164,24 +2164,29 @@
         }
 
         async function pushOfflineQueue(reanalyze) {
+            const uid = userId || getUserId();
             const mediaKey = `editq_${entryKey}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             try {
                 await idbMediaPut(mediaKey, serializeImagesForStorage());
             } catch (_) {}
             const record = {
                 entryId: entryKey,
-                userId,
+                userId: uid,
                 title: titleEl.value.trim(),
                 text: bodyEl.value.trim(),
                 tags: Array.from(tags).map(normalizeTag).filter(Boolean),
-                imageUrls: editorImages.map((im) => im.url).filter(Boolean),
+                imageUrls: imagesPayloadStrings().filter((u) => !String(u).startsWith('data:')),
                 imageMediaKey: mediaKey,
                 reanalyze: Boolean(reanalyze),
                 queuedAt: new Date().toISOString(),
             };
-            const q = readQueue();
-            q.push(record);
-            writeQueue(q);
+            if (typeof window.DiariOffline?.upsertEditQueueRecord === 'function') {
+                window.DiariOffline.upsertEditQueueRecord(record);
+            } else {
+                const q = readQueue().filter((row) => String(row.entryId) !== String(entryKey));
+                q.push(record);
+                writeQueue(q);
+            }
         }
 
         async function flushEditQueue() {
@@ -2259,7 +2264,16 @@
         }
 
         const onOnline = () => {
-            flushEditQueue();
+            if (typeof window.DiariOffline?.requestPwaSync === 'function') {
+                void window.DiariOffline.requestPwaSync().then(() => {
+                    if (signal.aborted) return;
+                    entry = loadEntryFromList(entryKey) || entry;
+                    syncReadPane();
+                    renderImageStrip();
+                });
+            } else {
+                void flushEditQueue();
+            }
             void loadTagChoices().then(() => {
                 if (signal.aborted) return;
                 fillPicker();
@@ -2267,9 +2281,12 @@
         };
         window.addEventListener('online', onOnline, { signal });
         window.addEventListener(
-            'diari-offline-sync',
+            'diari-offline-sync-complete',
             () => {
-                void flushEditQueue();
+                if (signal.aborted) return;
+                entry = loadEntryFromList(entryKey) || entry;
+                syncReadPane();
+                renderImageStrip();
             },
             { signal }
         );
@@ -2297,12 +2314,15 @@
                     await pushOfflineQueue(reanalyze);
                     const merged = offlineMergedEntry(reanalyze);
                     const uid = userId || getUserId();
+                    let updated = null;
                     if (typeof window.DiariOffline?.markEntryEditPendingInCache === 'function') {
-                        window.DiariOffline.markEntryEditPendingInCache(entryKey, merged, uid);
-                    } else {
-                        replaceEntryInList(merged);
+                        updated = window.DiariOffline.markEntryEditPendingInCache(entryKey, merged, uid, merged);
                     }
-                    entry = loadEntryFromList(entryKey) || merged;
+                    if (!updated) {
+                        replaceEntryInList(merged);
+                        updated = merged;
+                    }
+                    entry = loadEntryFromList(entryKey) || updated;
                     baseline = serializeState();
                     clearDraft();
                     renderImageStrip();

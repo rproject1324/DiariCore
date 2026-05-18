@@ -431,7 +431,12 @@ class SidebarComponent {
         // Handle window resize
         window.addEventListener('resize', () => this.handleResize());
 
-        window.addEventListener('online', () => this.refreshSyncStatusBadge());
+        window.addEventListener('online', () => {
+            this.refreshSyncStatusBadge();
+            if (window.DiariOffline?.requestPwaSync) {
+                void window.DiariOffline.requestPwaSync();
+            }
+        });
         window.addEventListener('offline', () => this.refreshSyncStatusBadge());
         window.addEventListener('storage', () => this.refreshSyncStatusBadge());
         window.addEventListener('diari-offline-sync', () => this.refreshSyncStatusBadge());

@@ -1317,7 +1317,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         flushTagSyncQueue();
         syncUserTagsIntoUI();
         flushOfflineEntryQueue();
-        if (window.DiariOffline?.syncAll) void window.DiariOffline.syncAll();
+        if (window.DiariOffline?.requestPwaSync) void window.DiariOffline.requestPwaSync();
+        else if (window.DiariOffline?.syncAll) void window.DiariOffline.syncAll();
     });
     window.addEventListener('diari-offline-sync', () => {
         flushTagSyncQueue();

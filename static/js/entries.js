@@ -114,15 +114,15 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('diari-offline-sync-complete', () => {
         initializeEntriesFromStorage({ preserveNavigation: true });
     });
-    window.addEventListener('online', schedulePwaEntriesSync);
-    window.addEventListener('pageshow', (ev) => {
-        if (ev.persisted || document.visibilityState === 'visible') {
-            schedulePwaEntriesSync();
-        }
+    window.addEventListener('online', () => {
+        void runPwaEntriesSyncNow();
+    });
+    window.addEventListener('pageshow', () => {
+        void runPwaEntriesSyncNow();
     });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            schedulePwaEntriesSync();
+            void runPwaEntriesSyncNow();
         }
     });
     } finally {
@@ -139,37 +139,35 @@ async function syncEntriesFromApi() {
         }
         return;
     }
-    if (typeof window.DiariOffline?.syncAll !== 'function') {
+    const runSync =
+        typeof window.DiariOffline?.requestPwaSync === 'function'
+            ? () => window.DiariOffline.requestPwaSync()
+            : typeof window.DiariOffline?.syncAll === 'function'
+              ? () => window.DiariOffline.syncAll()
+              : null;
+    if (!runSync) {
         if (window.DiariOffline?.syncEntriesFromApi) {
             await window.DiariOffline.syncEntriesFromApi();
         }
         return;
     }
-    for (let attempt = 0; attempt < 3; attempt++) {
-        await window.DiariOffline.syncAll();
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const result = await runSync();
         const pending =
             typeof window.DiariOffline.hasPendingOfflineWork === 'function' &&
             window.DiariOffline.hasPendingOfflineWork();
-        if (!pending || navigator.onLine === false) break;
-        if (attempt < 2) {
-            await new Promise((r) => window.setTimeout(r, 700 * (attempt + 1)));
+        if (result?.ok || (!pending && navigator.onLine !== false)) break;
+        if (navigator.onLine === false) break;
+        if (attempt < 4) {
+            await new Promise((r) => window.setTimeout(r, 600 * (attempt + 1)));
         }
     }
 }
 
-let entriesPwaSyncTimer = null;
-
-function schedulePwaEntriesSync() {
-    if (!isPwaOfflineEntriesUi()) return;
-    if (typeof window.DiariOffline?.syncAll !== 'function') return;
-    if (navigator.onLine === false) return;
-    if (entriesPwaSyncTimer) clearTimeout(entriesPwaSyncTimer);
-    entriesPwaSyncTimer = window.setTimeout(() => {
-        entriesPwaSyncTimer = null;
-        void syncEntriesFromApi().then(() => {
-            initializeEntriesFromStorage({ preserveNavigation: true });
-        });
-    }, 350);
+async function runPwaEntriesSyncNow() {
+    if (!isPwaOfflineEntriesUi() || navigator.onLine === false) return;
+    await syncEntriesFromApi();
+    initializeEntriesFromStorage({ preserveNavigation: true });
 }
 
 function monthKeyFromDate(d) {

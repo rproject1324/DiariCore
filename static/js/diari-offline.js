@@ -200,18 +200,53 @@
         return list.findIndex((e) => String(e?.id ?? '') === key);
     }
 
-    function markEntryEditPendingInCache(entryKey, patch, userId) {
+    function markEntryEditPendingInCache(entryKey, patch, userId, fallbackEntry) {
+        const key = String(entryKey ?? '');
         const list = readEntriesCache();
-        const idx = findEntryIndexInCache(list, entryKey);
+        let idx = findEntryIndexInCache(list, key);
+        if (idx < 0 && fallbackEntry) {
+            list.push({
+                ...fallbackEntry,
+                id: key || fallbackEntry.id,
+            });
+            idx = list.length - 1;
+        }
         if (idx < 0) return null;
         list[idx] = {
             ...list[idx],
             ...(patch || {}),
+            id: key || list[idx].id,
             pwaEditPending: true,
             pwaDeletionPending: false,
         };
         writeEntriesCache(list, userId);
         return list[idx];
+    }
+
+    function upsertEditQueueRecord(record) {
+        const key = String(record?.entryId ?? '');
+        const q = readEditQueue().filter((row) => String(row?.entryId ?? '') !== key);
+        q.push(record);
+        writeEditQueue(q);
+    }
+
+    function coalesceEditQueueLatest() {
+        const q = readEditQueue();
+        if (!q.length) return [];
+        const byId = new Map();
+        for (const row of q) {
+            const key = String(row?.entryId ?? '');
+            if (!key) continue;
+            const prev = byId.get(key);
+            if (!prev) {
+                byId.set(key, row);
+                continue;
+            }
+            const ta = new Date(row.queuedAt || 0).getTime();
+            const tb = new Date(prev.queuedAt || 0).getTime();
+            byId.set(key, ta >= tb ? row : prev);
+        }
+        return Array.from(byId.values());
     }
 
     async function removePendingCreateByLocalEntryId(localEntryId) {
@@ -887,12 +922,71 @@
         db.close();
     }
 
+    async function waitForReachability(maxAttempts = 10, baseDelayMs = 400) {
+        if (!isOnline()) return false;
+        for (let i = 0; i < maxAttempts; i++) {
+            if (await probeReachability()) return true;
+            if (!isOnline()) return false;
+            if (i < maxAttempts - 1) {
+                await new Promise((r) => global.setTimeout(r, baseDelayMs * (i + 1)));
+            }
+        }
+        return false;
+    }
+
+    let syncAllPromise = null;
+    let syncKickTimer = null;
+
+    async function syncAll() {
+        if (!isPwaUiContext()) return { ok: false, reason: 'not-pwa' };
+        if (!isOnline()) return { ok: false, reason: 'offline' };
+
+        if (syncAllPromise) return syncAllPromise;
+
+        syncAllPromise = (async () => {
+            const reachable = await waitForReachability();
+            if (!reachable) {
+                return { ok: false, reason: 'unreachable' };
+            }
+
+            global.dispatchEvent(new CustomEvent('diari-offline-sync'));
+            await flushPendingEntryCreates();
+            await flushPendingEntryEdits();
+            await flushPendingEntryDeletes();
+            await flushTagSyncQueue();
+            await reanalyzeCachedFallbackEntries();
+            await syncEntriesFromApi();
+            global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
+            return { ok: true };
+        })()
+            .catch((e) => {
+                console.warn('[DiariOffline] syncAll failed:', e);
+                return { ok: false, reason: 'error' };
+            })
+            .finally(() => {
+                syncAllPromise = null;
+            });
+
+        return syncAllPromise;
+    }
+
+    function requestPwaSync() {
+        if (!isPwaUiContext()) return Promise.resolve({ ok: false, reason: 'not-pwa' });
+        if (syncKickTimer) global.clearTimeout(syncKickTimer);
+        return new Promise((resolve) => {
+            syncKickTimer = global.setTimeout(() => {
+                syncKickTimer = null;
+                void syncAll().then(resolve);
+            }, 80);
+        });
+    }
+
     async function flushPendingEntryEdits() {
         if (!isOnline()) return;
         const userId = getUserId();
         if (!userId) return;
 
-        const q = readEditQueue();
+        const q = coalesceEditQueueLatest();
         const next = [];
         const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
 
@@ -908,7 +1002,15 @@
                 continue;
             }
             try {
+                const cacheRow = readEntriesCache().find((e) => String(e?.id ?? '') === entryKey);
+                const title = cacheRow?.pwaEditPending ? cacheRow.title ?? row.title : row.title;
+                const text = cacheRow?.pwaEditPending ? cacheRow.text ?? row.text : row.text;
+                const tags = cacheRow?.pwaEditPending ? cacheRow.tags ?? row.tags : row.tags;
+
                 let imageUrls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
+                if (cacheRow?.pwaEditPending && Array.isArray(cacheRow.imageUrls) && cacheRow.imageUrls.length) {
+                    imageUrls = cacheRow.imageUrls.filter((u) => u && !String(u).startsWith('data:'));
+                }
                 if (row.imageMediaKey) {
                     const blobRow = await idbEditMediaGet(row.imageMediaKey);
                     if (blobRow?.images?.length) {
@@ -932,9 +1034,9 @@
                 }
                 const body = {
                     userId: row.userId || userId,
-                    title: row.title,
-                    text: row.text,
-                    tags: row.tags,
+                    title: title || '',
+                    text: text || '',
+                    tags: tags || [],
                     reanalyze: row.reanalyze,
                 };
                 if (row.imageMediaKey || imageUrls.length) body.imageUrls = imageUrls;
@@ -1053,25 +1155,28 @@
         return readEntriesCache().some((e) => isOfflineLocalEntry(e));
     }
 
-    async function syncAll() {
-        if (!isPwaUiContext()) return;
-        if (!isOnline()) return;
+    let connectivityWatchStarted = false;
 
-        let reachable = await probeReachability();
-        if (!reachable) {
-            await new Promise((r) => global.setTimeout(r, 600));
-            reachable = await probeReachability();
-        }
-        if (!reachable) return;
+    function startPwaConnectivityWatch() {
+        if (connectivityWatchStarted || !isPwaUiContext()) return;
+        connectivityWatchStarted = true;
 
-        global.dispatchEvent(new CustomEvent('diari-offline-sync'));
-        await flushPendingEntryCreates();
-        await flushPendingEntryEdits();
-        await flushPendingEntryDeletes();
-        await flushTagSyncQueue();
-        await reanalyzeCachedFallbackEntries();
-        await syncEntriesFromApi();
-        global.dispatchEvent(new CustomEvent('diari-offline-sync-complete'));
+        global.addEventListener('online', () => {
+            void requestPwaSync();
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                void requestPwaSync();
+            }
+        });
+        global.addEventListener('pageshow', () => {
+            void requestPwaSync();
+        });
+
+        global.setInterval(() => {
+            if (!isOnline() || !hasPendingOfflineWork()) return;
+            void requestPwaSync();
+        }, 10000);
     }
 
     function guardOfflineAuth() {
@@ -1091,11 +1196,9 @@
     function init() {
         if (!isPwaUiContext()) return;
         guardOfflineAuth();
-        global.addEventListener('online', () => {
-            void syncAll();
-        });
+        startPwaConnectivityWatch();
         if (isOnline()) {
-            void syncAll();
+            void requestPwaSync();
         }
     }
 
@@ -1109,7 +1212,9 @@
         shouldSaveEntryOffline,
         getEntrySyncLabel,
         markEntryEditPendingInCache,
+        upsertEditQueueRecord,
         markEntryDeletionPending,
+        requestPwaSync,
         getSessionUser,
         getUserId,
         readEntriesCache,
