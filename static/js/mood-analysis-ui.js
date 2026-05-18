@@ -446,9 +446,7 @@
     async function delayUntilEntryUpdateGate() {
         const shownAt = entryUpdateLoadingShownAt || Date.now();
         const barEnd = shownAt + ENTRY_UPDATE_TOTAL_MS;
-        const editEnd = entryUpdateEditingReadyAt ? entryUpdateEditingReadyAt + ENTRY_UPDATE_MIN_AFTER_EDITING_MS : 0;
-        const targetEnd = Math.max(barEnd, editEnd);
-        const wait = Math.max(0, targetEnd - Date.now());
+        const wait = Math.max(0, barEnd - Date.now());
         await new Promise((resolve) => setTimeout(resolve, wait));
     }
 

@@ -2476,10 +2476,12 @@
                 }
                 let metadataSavedOk = false;
                 try {
-                    metadataSavedOk = await runSave(false);
-                    if (actOffline || metadataSavedOk) {
-                        await global.DiariMoodAnalysis.delayUntilEntryUpdateGate();
-                    }
+                    const savePromise = runSave(false);
+                    await Promise.all([
+                        savePromise,
+                        global.DiariMoodAnalysis.delayUntilEntryUpdateGate(),
+                    ]);
+                    metadataSavedOk = await savePromise;
                 } finally {
                     global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
                 }

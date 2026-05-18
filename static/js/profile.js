@@ -15,9 +15,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         window.addEventListener('online', function () {
+            refreshProfilePersonalSaveButton();
             if (window.DiariOffline?.requestPwaSync) {
                 void window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
             }
+        });
+        window.addEventListener('offline', function () {
+            refreshProfilePersonalSaveButton();
         });
     }
 });
@@ -88,6 +92,38 @@ async function isPwaOfflineForUserActions() {
         return window.DiariOffline.isPwaOfflineNow();
     }
     return navigator.onLine === false;
+}
+
+function isPwaOfflineForUserActionsSync() {
+    if (!isPwaProfileContext()) return false;
+    if (window.DiariOffline?.isPwaOfflineNow) {
+        return window.DiariOffline.isPwaOfflineNow();
+    }
+    return navigator.onLine === false;
+}
+
+function profilePersonalNicknameEmailChangedFromStored(user, nick, email) {
+    if (!user) return true;
+    const origNick = String(user.nickname || '').trim();
+    const origEmail = String(user.email || '')
+        .trim()
+        .toLowerCase();
+    if (nick.trim() !== origNick) return true;
+    if (email.trim().toLowerCase() !== origEmail) return true;
+    return false;
+}
+
+function isProfilePersonalFormValidForPwaOffline() {
+    if (!validateProfilePersonalField('profileFieldFirstName')) return false;
+    if (!validateProfilePersonalField('profileFieldLastName')) return false;
+    if (!validateProfilePersonalField('profileFieldBirthday')) return false;
+    const nickEl = document.getElementById('profileFieldNickname');
+    const emEl = document.getElementById('profileFieldEmail');
+    const nv = ((nickEl && nickEl.value) || '').trim();
+    const ev = ((emEl && emEl.value) || '').trim();
+    if (!nv || nv.length < 4 || nv.length > 64) return false;
+    if (!ev || !profilePersonalIsValidEmail(ev)) return false;
+    return true;
 }
 
 function showPwaInternetRequiredToast() {
@@ -642,7 +678,9 @@ function isProfilePersonalFormValid() {
 function refreshProfilePersonalSaveButton() {
     var btn = document.getElementById('profilePersonalSaveBtn');
     if (!btn) return;
-    btn.disabled = !isProfilePersonalFormValid();
+    btn.disabled = isPwaOfflineForUserActionsSync()
+        ? !isProfilePersonalFormValidForPwaOffline()
+        : !isProfilePersonalFormValid();
 }
 
 function wireProfilePersonalLiveValidation() {
@@ -1698,11 +1736,6 @@ function savePersonalInfoForm() {
         return;
     }
 
-    if (!isProfilePersonalFormValid()) {
-        showNotification('Please fix the highlighted fields before saving.', 'warning');
-        return;
-    }
-
     const first = (document.getElementById('profileFieldFirstName')?.value || '').trim();
     const last = (document.getElementById('profileFieldLastName')?.value || '').trim();
     const nick = (document.getElementById('profileFieldNickname')?.value || '').trim();
@@ -1712,15 +1745,44 @@ function savePersonalInfoForm() {
 
     const saveBtn = document.getElementById('profilePersonalSaveBtn');
     void (async function () {
-        const offlineFirst = await isPwaOfflineForUserActions();
-        const availabilityChecks = offlineFirst
-            ? [Promise.resolve(true), Promise.resolve(true)]
-            : [
-                  checkProfilePersonalAvailability('profileFieldNickname', nick),
-                  checkProfilePersonalAvailability('profileFieldEmail', email),
-              ];
+        const offline = await isPwaOfflineForUserActions();
+        if (offline && isPwaProfileContext()) {
+            if (!isProfilePersonalFormValidForPwaOffline()) {
+                showNotification('Please fix the highlighted fields before saving.', 'warning');
+                return;
+            }
+            if (profilePersonalNicknameEmailChangedFromStored(user, nick, email)) {
+                showPwaInternetRequiredToast();
+                return;
+            }
+            if (saveBtn) saveBtn.disabled = true;
+            const patch = {
+                firstName: first,
+                lastName: last,
+                gender: gender || null,
+                birthday: bday || null,
+            };
+            if (window.DiariOffline?.savePwaProfilePending) {
+                window.DiariOffline.savePwaProfilePending(patch);
+            }
+            if (saveBtn) saveBtn.disabled = false;
+            refreshProfilePersonalSaveButton();
+            finishProfilePersonalSaveSuccessOffline(patch);
+            return;
+        }
+
+        if (!isProfilePersonalFormValid()) {
+            showNotification('Please fix the highlighted fields before saving.', 'warning');
+            return;
+        }
+
+        const availabilityChecks = [
+            checkProfilePersonalAvailability('profileFieldNickname', nick),
+            checkProfilePersonalAvailability('profileFieldEmail', email),
+        ];
         return Promise.all(availabilityChecks);
     })().then(async function (results) {
+        if (!results) return;
         if (!results[0] || !results[1]) {
             refreshProfilePersonalSaveButton();
             showNotification('Username or email is not available.', 'warning');
@@ -1736,7 +1798,6 @@ function savePersonalInfoForm() {
             .toLowerCase();
         const newEmailNorm = email.trim().toLowerCase();
         const emailChanged = newEmailNorm !== originalEmail;
-        const offline = await isPwaOfflineForUserActions();
 
         const profileBody = {
             userId: uid,
@@ -1751,12 +1812,6 @@ function savePersonalInfoForm() {
         if (saveBtn) saveBtn.disabled = true;
 
         if (emailChanged) {
-            if (offline) {
-                if (saveBtn) saveBtn.disabled = false;
-                refreshProfilePersonalSaveButton();
-                showPwaInternetRequiredToast();
-                return;
-            }
             fetch('/api/user/profile/email-change-request', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1796,22 +1851,6 @@ function savePersonalInfoForm() {
                         showNotification('Could not reach the server.', 'error');
                     }
                 });
-            return;
-        }
-
-        if (offline) {
-            const patch = {
-                firstName: first,
-                lastName: last,
-                nickname: nick,
-                gender: gender || null,
-                birthday: bday || null,
-            };
-            if (window.DiariOffline?.savePwaProfilePending) {
-                window.DiariOffline.savePwaProfilePending(patch);
-            }
-            if (saveBtn) saveBtn.disabled = false;
-            finishProfilePersonalSaveSuccessOffline(patch);
             return;
         }
 
