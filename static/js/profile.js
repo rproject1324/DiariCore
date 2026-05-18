@@ -66,19 +66,28 @@ const PWA_PASSWORD_INTERNET_MSG =
     'Please connect to the internet and try changing you password again.';
 
 function isPwaProfileContext() {
-    if (window.DiariOffline && typeof window.DiariOffline.isPwaUiContext === 'function') {
-        return window.DiariOffline.isPwaUiContext();
+    if (window.DiariOffline?.isPwaUiContext?.()) return true;
+    if (window.DiariOffline?.isPwaStandalone?.()) return true;
+    try {
+        if (window.DiariPWA?.isStandalone?.()) return true;
+    } catch (_) {
+        /* ignore */
     }
-    return false;
+    const el = document.documentElement;
+    return (
+        el.classList.contains('diari-pwa-standalone') ||
+        el.getAttribute('data-diari-pwa') === 'standalone' ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        window.navigator.standalone === true
+    );
 }
 
 async function isPwaOfflineForUserActions() {
     if (!isPwaProfileContext()) return false;
-    if (!navigator.onLine) return true;
-    if (typeof window.DiariOffline?.shouldActOffline === 'function') {
-        return window.DiariOffline.shouldActOffline();
+    if (window.DiariOffline?.isPwaOfflineNow) {
+        return window.DiariOffline.isPwaOfflineNow();
     }
-    return false;
+    return navigator.onLine === false;
 }
 
 function showPwaInternetRequiredToast() {
@@ -1778,10 +1787,14 @@ function savePersonalInfoForm() {
                     );
                     openProfileEmailChangeOtpModal(email.trim());
                 })
-                .catch(function () {
+                .catch(async function () {
                     if (saveBtn) saveBtn.disabled = false;
                     refreshProfilePersonalSaveButton();
-                    showNotification('Could not reach the server.', 'error');
+                    if (await isPwaOfflineForUserActions()) {
+                        showPwaInternetRequiredToast();
+                    } else {
+                        showNotification('Could not reach the server.', 'error');
+                    }
                 });
             return;
         }
@@ -2202,7 +2215,11 @@ async function submitProfilePasswordChangeRequest(isResend) {
         openProfilePwdChangeOtpModal();
         return true;
     } catch (_) {
-        showNotification('Could not send verification code. Check your connection.', 'error');
+        if (isPwaProfileContext() && !navigator.onLine) {
+            showPwaPasswordInternetToast();
+        } else {
+            showNotification('Could not send verification code. Check your connection.', 'error');
+        }
         return false;
     } finally {
         if (saveBtn) {

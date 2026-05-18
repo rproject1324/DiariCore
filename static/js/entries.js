@@ -26,6 +26,9 @@ let entriesMonthKeysOrdered = [];
 let entriesSelectedMonthKey = '';
 let entriesCurrentPage = 1;
 
+const PWA_OFFLINE_SAVED_MSG =
+    'Saved offline. Changes will sync automatically when connected.';
+
 /** PWA installed / standalone — not desktop browser tab. */
 function isPwaOfflineEntriesUi() {
     if (window.DiariOffline?.isPwaUiContext) {
@@ -555,8 +558,17 @@ function moodDisplayLabel(feelingRaw) {
     return 'Neutral';
 }
 
+function isEntryEditPendingForList(ent) {
+    if (!isPwaOfflineEntriesUi() || !ent) return false;
+    if (window.DiariOffline?.shouldShowEntryEditPendingPill) {
+        return window.DiariOffline.shouldShowEntryEditPendingPill(ent);
+    }
+    if (ent.pwaEditPending !== true) return false;
+    return !navigator.onLine;
+}
+
 function isEntryEditedForList(ent) {
-    if (isPwaOfflineEntriesUi() && ent && (ent.pwaEditPending === true || ent.pwaDeletionPending === true)) {
+    if (isPwaOfflineEntriesUi() && ent && (isEntryEditPendingForList(ent) || ent.pwaDeletionPending === true)) {
         return false;
     }
     if (isPwaOfflineEntriesUi() && ent && ent.pwaShowEdited === true) {
@@ -588,7 +600,7 @@ function entrySyncPillHtml(entry) {
     if (!label) {
         if (entry.pwaDeletionPending === true) {
             label = { text: 'Deletion Pending', kind: 'delete' };
-        } else if (entry.pwaEditPending === true) {
+        } else if (isEntryEditPendingForList(entry)) {
             label = { text: 'Edit Pending', kind: 'edit' };
         } else {
             const id = String(entry.id ?? '');
@@ -949,8 +961,12 @@ async function openEntriesDetailInline(entryId) {
         const mountOpts = {
             entryId: entryKey,
             onLeavePanel: closeEntriesDetailInline,
-            afterMetadataSaveToEntries: () => {
+            afterMetadataSaveToEntries: (detail) => {
                 closeEntriesDetailInline();
+                if (detail && detail.offlineSave && isPwaOfflineEntriesUi()) {
+                    showNotification(PWA_OFFLINE_SAVED_MSG, 'info', 5000);
+                    return;
+                }
                 showNotification('Updated the Entry Successfully...', 'success');
             },
             afterEntryDeletedToEntries: () => {

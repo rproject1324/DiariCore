@@ -170,11 +170,28 @@
     }
 
     function isPwaUiContext() {
-        return (
-            isPwaStandalone() ||
-            (global.document &&
-                global.document.documentElement.classList.contains('diari-pwa-standalone'))
-        );
+        if (isPwaStandalone()) return true;
+        const el = global.document && global.document.documentElement;
+        if (!el) return false;
+        if (el.classList.contains('diari-pwa-standalone')) return true;
+        if (el.getAttribute('data-diari-pwa') === 'standalone') return true;
+        return false;
+    }
+
+    function ensurePwaDocumentMarkers() {
+        if (!isPwaUiContext()) return;
+        const el = global.document.documentElement;
+        el.classList.add('diari-pwa-standalone');
+        el.setAttribute('data-diari-pwa', 'standalone');
+    }
+
+    /** PWA installed app with no network (airplane mode) — not “server unreachable” while online. */
+    function isPwaOfflineNow() {
+        return isPwaUiContext() && !isOnline();
+    }
+
+    function shouldShowEntryEditPendingPill(entry) {
+        return Boolean(entry && entry.pwaEditPending === true && !isOnline());
     }
 
     function getEntrySyncLabel(entry) {
@@ -182,7 +199,7 @@
         if (entry.pwaDeletionPending === true) {
             return { text: 'Deletion Pending', kind: 'delete' };
         }
-        if (entry.pwaEditPending === true) {
+        if (shouldShowEntryEditPendingPill(entry)) {
             return { text: 'Edit Pending', kind: 'edit' };
         }
         const id = String(entry.id ?? '');
@@ -558,7 +575,7 @@
             if (loc.pwaDeletionPending === true && hasQueuedDeleteForEntry(key)) {
                 return { ...s, pwaDeletionPending: true, pwaEditPending: false };
             }
-            if (loc.pwaEditPending === true) {
+            if (loc.pwaEditPending === true && (!isOnline() || hasQueuedEditForEntry(key))) {
                 return {
                     ...s,
                     title: loc.title ?? s.title,
@@ -574,6 +591,7 @@
                     moodScoringOffline: loc.moodScoringOffline ?? s.moodScoringOffline,
                     pwaEditPending: true,
                     pwaDeletionPending: false,
+                    pwaShowEdited: false,
                 };
             }
             return s;
@@ -673,22 +691,27 @@
                 pwaDeletionPending: entry.pwaDeletionPending === true,
             };
             if (serverSynced) {
-                patch.pwaEditPending = false;
-                patch.pwaDeletionPending = false;
-                patch.pendingServerAnalysis = false;
-                patch.moodScoringOffline = false;
-                if (isPwaUiContext()) {
-                    if (entry.pwaShowEdited === true) {
-                        patch.pwaShowEdited = true;
-                    } else {
-                        const u = entry.updatedAt ? new Date(entry.updatedAt).getTime() : NaN;
-                        const c = entry.createdAt
-                            ? new Date(entry.createdAt).getTime()
-                            : entry.date
-                              ? new Date(entry.date).getTime()
-                              : NaN;
-                        patch.pwaShowEdited =
-                            !Number.isNaN(u) && !Number.isNaN(c) && u > c + 1500;
+                if (entry.pwaEditPending === true) {
+                    patch.pwaEditPending = true;
+                    patch.pwaShowEdited = false;
+                } else {
+                    patch.pwaEditPending = false;
+                    patch.pwaDeletionPending = false;
+                    patch.pendingServerAnalysis = false;
+                    patch.moodScoringOffline = false;
+                    if (isPwaUiContext()) {
+                        if (entry.pwaShowEdited === true) {
+                            patch.pwaShowEdited = true;
+                        } else {
+                            const u = entry.updatedAt ? new Date(entry.updatedAt).getTime() : NaN;
+                            const c = entry.createdAt
+                                ? new Date(entry.createdAt).getTime()
+                                : entry.date
+                                  ? new Date(entry.date).getTime()
+                                  : NaN;
+                            patch.pwaShowEdited =
+                                !Number.isNaN(u) && !Number.isNaN(c) && u > c + 1500;
+                        }
                     }
                 }
             }
@@ -1446,6 +1469,7 @@
     }
 
     function init() {
+        ensurePwaDocumentMarkers();
         if (!isPwaUiContext()) return;
         guardOfflineAuth();
         startPwaConnectivityWatch();
@@ -1454,10 +1478,15 @@
         }
     }
 
+    ensurePwaDocumentMarkers();
+
     global.DiariOffline = {
         isOnline,
         isPwaStandalone,
         isPwaUiContext,
+        isPwaOfflineNow,
+        ensurePwaDocumentMarkers,
+        shouldShowEntryEditPendingPill,
         hasPendingOfflineWork,
         hasPendingOfflineWorkAsync,
         probeReachability,

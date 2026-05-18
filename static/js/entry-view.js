@@ -189,16 +189,15 @@
         );
     }
 
-    async function shouldActOffline() {
+    /** Offline entry save queue — airplane mode only (not “API probe failed” while online). */
+    async function shouldSaveEntryAsOffline() {
         if (!isPwaOfflineContext()) return false;
         if (!isOnline()) return true;
-        if (typeof window.DiariOffline?.shouldActOffline === 'function') {
-            return window.DiariOffline.shouldActOffline();
-        }
-        if (typeof window.DiariOffline?.probeReachability === 'function') {
-            return !(await window.DiariOffline.probeReachability());
-        }
-        return true;
+        return false;
+    }
+
+    async function shouldActOffline() {
+        return shouldSaveEntryAsOffline();
     }
 
     const ENTRY_EDIT_MEDIA_DB = 'diariCoreOfflineEntryEditMedia';
@@ -2337,7 +2336,7 @@
             }
             saveAnalyzeBtn.disabled = true;
             try {
-                if (await shouldActOffline()) {
+                if (await shouldSaveEntryAsOffline()) {
                     await pushOfflineQueue(reanalyze);
                     const merged = offlineMergedEntry(reanalyze);
                     const uid = userId || getUserId();
@@ -2457,7 +2456,7 @@
                 }
                 if (!isDirty()) return;
 
-                const actOffline = await shouldActOffline();
+                const actOffline = await shouldSaveEntryAsOffline();
                 global.DiariMoodAnalysis.resetSession();
                 const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
                 if (actOffline) {
@@ -2485,10 +2484,14 @@
                     global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
                 }
                 if (metadataSavedOk && afterMetadataSaveToEntries) {
-                    afterMetadataSaveToEntries();
+                    afterMetadataSaveToEntries({ offlineSave: actOffline });
                 } else if (metadataSavedOk && actOffline) {
                     if (window.DiariToast && typeof window.DiariToast.show === 'function') {
-                        window.DiariToast.show('Saved offline. Changes will sync when you are back online.', 'info', 4000);
+                        window.DiariToast.show(
+                            'Saved offline. Changes will sync automatically when connected.',
+                            'info',
+                            5000
+                        );
                     }
                 }
             },
