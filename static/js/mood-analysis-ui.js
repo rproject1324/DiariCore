@@ -10,6 +10,7 @@
     const MOOD_ANALYSIS_BOOK_LOTTIE_SRC = '/noto-emoji/book.json?v=20260517b';
     const ENTRY_UPDATE_EDITING_LOTTIE_SRC = '/noto-emoji/pencil_write.json?v=20260513d';
     const ENTRY_UPDATE_TOTAL_MS = 4200;
+    const ENTRY_UPDATE_TOTAL_MS_PWA = 1400;
     const ENTRY_UPDATE_MIN_AFTER_EDITING_MS = 700;
 
     let moodAnalysisLoadingShownAt = 0;
@@ -26,6 +27,8 @@
     let entryUpdateEditingPrimePromise = null;
     let entryUpdateEditingData = null;
     let entryUpdateSaveFinished = false;
+    let entryUpdateProgressTotalMs = ENTRY_UPDATE_TOTAL_MS;
+    let entryUpdateProgressSnap = null;
 
     function clearMoodAnalysisProgressTimer() {
         if (moodAnalysisProgressTimer != null) {
@@ -54,8 +57,16 @@
         entryUpdateSaveFinished = false;
     }
 
+    function snapEntryUpdateProgressToComplete() {
+        if (entryUpdateProgressSnap) {
+            entryUpdateProgressSnap();
+            entryUpdateProgressSnap = null;
+        }
+    }
+
     function finishEntryUpdateLoading() {
         entryUpdateSaveFinished = true;
+        snapEntryUpdateProgressToComplete();
     }
 
     function getMoodAnalysisBookPool() {
@@ -303,7 +314,7 @@
         });
     }
 
-    function showEntryUpdateLoading(overlay) {
+    function showEntryUpdateLoading(overlay, options) {
         parkMoodAnalysisBookMount();
         parkEntryUpdateEditingMount();
         clearMoodAnalysisProgressTimer();
@@ -452,8 +463,10 @@
 
     async function delayUntilEntryUpdateGate(options) {
         const shownAt = entryUpdateLoadingShownAt || Date.now();
-        const barEnd = shownAt + ENTRY_UPDATE_TOTAL_MS;
+        const totalMs = entryUpdateProgressTotalMs || ENTRY_UPDATE_TOTAL_MS;
+        const barEnd = shownAt + totalMs;
         const requireSaveSignal = Boolean(options && options.requireSaveSignal);
+        const pwaFast = Boolean(options && options.pwaFast);
 
         if (!requireSaveSignal) {
             const wait = Math.max(0, barEnd - Date.now());
@@ -461,8 +474,8 @@
             return;
         }
 
-        const minEnd = shownAt + 500;
-        const hardCap = shownAt + ENTRY_UPDATE_TOTAL_MS + 2500;
+        const minEnd = shownAt + (pwaFast ? 280 : 500);
+        const hardCap = shownAt + (pwaFast ? totalMs + 400 : ENTRY_UPDATE_TOTAL_MS + 2500);
 
         await new Promise((resolve) => {
             const done = () => resolve();
@@ -472,8 +485,12 @@
                     done();
                     return true;
                 }
-                const barDone = now >= barEnd;
                 const minDone = now >= minEnd;
+                if (pwaFast && entryUpdateSaveFinished && minDone) {
+                    done();
+                    return true;
+                }
+                const barDone = now >= barEnd;
                 if (barDone && minDone && entryUpdateSaveFinished) {
                     done();
                     return true;
