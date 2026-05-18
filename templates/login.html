@@ -1,13 +1,31 @@
 <!DOCTYPE html>
-<html lang="en" class="diari-shell-pending diari-pwa-auth-pending">
+<html lang="en" class="diari-shell-pending">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        html.diari-pwa-auth-pending #loginContainer {
-            visibility: hidden;
-        }
-    </style>
+    <script>
+        /* PWA only: skip login when session already exists (no hide-on-all-platforms). */
+        (function (w) {
+            function isPwaStandalone() {
+                return (
+                    (w.matchMedia && w.matchMedia('(display-mode: standalone)').matches) ||
+                    w.navigator.standalone === true
+                );
+            }
+            if (!isPwaStandalone()) return;
+            try {
+                var raw = w.localStorage.getItem('diariCoreUser');
+                if (!raw) return;
+                var u = JSON.parse(raw);
+                if (!u || u.isLoggedIn === false) return;
+                var id = u.id != null ? u.id : u.userId;
+                if (id == null || id === '' || Number(id) === 0) return;
+                w.location.replace(u.isAdmin ? 'admin' : 'dashboard.html');
+            } catch (_) {
+                /* ignore */
+            }
+        })(window);
+    </script>
     <link rel="stylesheet" href="diari-shell-pending.css">
     <title>Sign In - DiariCore</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
