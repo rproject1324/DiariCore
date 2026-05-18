@@ -2,10 +2,8 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
-        await window.DiariOffline.pullRemoteStateForRefresh();
-    } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
-        await window.DiariOffline.syncAllForPageLoad();
+    if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+        await window.DiariOffline.awaitServerState();
     }
 
     // Initialize variables

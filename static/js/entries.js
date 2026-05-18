@@ -104,8 +104,8 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     } catch (_) {}
 
-    if (typeof window.DiariOffline?.pullRemoteStateForRefresh === 'function') {
-        await window.DiariOffline.pullRemoteStateForRefresh();
+    if (typeof window.DiariOffline?.awaitServerState === 'function') {
+        await window.DiariOffline.awaitServerState();
     } else {
         await syncEntriesFromApi();
     }
@@ -157,8 +157,8 @@ document.addEventListener('DOMContentLoaded', async function() {
 });
 
 async function syncEntriesFromApi() {
-    if (typeof window.DiariOffline?.syncAllForPageLoad === 'function' && navigator.onLine !== false) {
-        await window.DiariOffline.syncAllForPageLoad();
+    if (typeof window.DiariOffline?.awaitServerState === 'function' && navigator.onLine !== false) {
+        await window.DiariOffline.awaitServerState();
         return;
     }
     if (window.DiariOffline?.syncEntriesFromApi) {

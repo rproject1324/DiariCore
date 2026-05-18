@@ -2564,10 +2564,8 @@
             window.location.href = 'entries.html';
             return;
         }
-        if (window.DiariOffline?.pullRemoteStateForRefresh && navigator.onLine !== false) {
-            await window.DiariOffline.pullRemoteStateForRefresh();
-        } else if (window.DiariOffline?.syncAllForPageLoad && navigator.onLine !== false) {
-            await window.DiariOffline.syncAllForPageLoad();
+        if (window.DiariOffline?.awaitServerState && navigator.onLine !== false) {
+            await window.DiariOffline.awaitServerState();
         }
         await mount({
             entryId: id,

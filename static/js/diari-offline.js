@@ -1755,6 +1755,9 @@
 
     let connectivityWatchStarted = false;
     let remoteStateWatchStarted = false;
+    let liveRemoteSyncStarted = false;
+    let liveRemoteSyncTimer = null;
+    const LIVE_REMOTE_SYNC_MS = 8000;
     let pwaLastReachable = null;
 
     function currentAppPageName() {
@@ -1766,26 +1769,58 @@
         return getUserId() > 0 && !PUBLIC_PAGES.has(currentAppPageName());
     }
 
+    function handleAuthExpiredFromSync(result) {
+        if (!result || !result.authExpired) return false;
+        try {
+            global.localStorage.removeItem(USER_KEY);
+        } catch (_) {
+            /* ignore */
+        }
+        global.location.href = 'login.html';
+        return true;
+    }
+
     /**
-     * Force a network pull + UI refresh (used on page reload / tab return).
+     * Force a network pull + UI refresh (page reload, tab return, live sync).
      */
     async function pullRemoteStateForRefresh() {
         if (!getUserId()) return { ok: false, reason: 'anon' };
+        if (!isOnline()) return { ok: false, reason: 'offline' };
+        syncPageLoadPromise = null;
         const result = await syncAllForPageLoad({
             forceRefresh: true,
             refresh: true,
             remoteWins: true,
             trustNavigatorOnline: true,
         });
-        if (result && result.authExpired) {
-            try {
-                global.localStorage.removeItem(USER_KEY);
-            } catch (_) {
-                /* ignore */
-            }
-            global.location.href = 'login.html';
-        }
+        handleAuthExpiredFromSync(result);
         return result;
+    }
+
+    /**
+     * Every authenticated page should await this before reading localStorage for UI.
+     */
+    async function awaitServerState() {
+        if (!getUserId()) return { ok: false, reason: 'anon' };
+        if (!isOnline()) return { ok: false, reason: 'offline' };
+        return pullRemoteStateForRefresh();
+    }
+
+    function startLiveRemoteSync() {
+        if (liveRemoteSyncStarted) return;
+        liveRemoteSyncStarted = true;
+
+        const tick = () => {
+            if (!isAuthenticatedAppPage()) return;
+            if (document.visibilityState === 'hidden') return;
+            if (!isOnline()) return;
+            void pullRemoteStateForRefresh();
+        };
+
+        liveRemoteSyncTimer = global.setInterval(tick, LIVE_REMOTE_SYNC_MS);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') tick();
+        });
     }
 
     function startRemoteStateWatch() {
@@ -1803,6 +1838,21 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') kick();
         });
+
+        try {
+            global.addEventListener('storage', (event) => {
+                if (
+                    event.key === ENTRIES_KEY ||
+                    event.key === USER_KEY ||
+                    event.key === null
+                ) {
+                    notifyRemoteStateRefresh();
+                    runPageRefreshHandlers();
+                }
+            });
+        } catch (_) {
+            /* ignore */
+        }
     }
 
     function startPwaConnectivityWatch() {
@@ -1867,6 +1917,9 @@
             startPwaConnectivityWatch();
         }
         startRemoteStateWatch();
+        if (isAuthenticatedAppPage()) {
+            startLiveRemoteSync();
+        }
     }
 
     ensurePwaDocumentMarkers();
@@ -1897,6 +1950,7 @@
         flushPwaUiPrefsPending,
         syncAllForPageLoad,
         pullRemoteStateForRefresh,
+        awaitServerState,
         registerPageRefreshHandler,
         mergeServerUserIntoLocal,
         wirePwaPageAutoSync,

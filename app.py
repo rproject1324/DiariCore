@@ -175,6 +175,16 @@ def _cleanup_removed_entry_uploads(old_urls: list[str], new_urls: list[str]) -> 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
 app.secret_key = os.environ.get("SECRET_KEY", "diaricore-dev-secret")
+
+
+@app.after_request
+def _api_no_cache_headers(response):
+    """Prevent browsers from serving stale JSON for cross-device refresh."""
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=14)
