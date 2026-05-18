@@ -962,9 +962,8 @@ async function openEntriesDetailInline(entryId) {
             },
             afterEntryDeletedToEntries: (detail) => {
                 closeEntriesDetailInline();
-                if (!detail || !detail.offline) {
-                    showNotification('Entry was Deleted Successfully', 'success');
-                }
+                if (detail && detail.offline) return;
+                showNotification('Entry was Deleted Successfully', 'success');
             },
         };
         if (uid) mountOpts.userId = uid;

@@ -1486,7 +1486,7 @@
                     }
                     if (afterEntryDeletedToEntries) {
                         onLeavePanel();
-                        afterEntryDeletedToEntries();
+                        afterEntryDeletedToEntries({ offline: true });
                     } else {
                         onLeavePanel();
                     }
