@@ -232,10 +232,20 @@
         }
     }
 
-    async function markEntryDeletionPending(entryKey, userId) {
+    async function markEntryDeletionPending(entryKey, userId, fallbackEntry) {
         const key = String(entryKey ?? '');
         const list = readEntriesCache();
-        const idx = findEntryIndexInCache(list, key);
+        let idx = findEntryIndexInCache(list, key);
+        if (idx < 0 && fallbackEntry) {
+            list.push({
+                ...fallbackEntry,
+                id: key || fallbackEntry.id,
+                pwaDeletionPending: true,
+                pwaEditPending: false,
+            });
+            writeEntriesCache(list, userId);
+            idx = list.length - 1;
+        }
         if (idx < 0) return false;
 
         list[idx] = {

@@ -505,6 +505,9 @@ function moodDisplayLabel(feelingRaw) {
 }
 
 function isEntryEditedForList(ent) {
+    if (isPwaOfflineEntriesUi() && ent && (ent.pwaEditPending === true || ent.pwaDeletionPending === true)) {
+        return false;
+    }
     if (!ent || !ent.updatedAt) return false;
     const u = new Date(ent.updatedAt).getTime();
     if (Number.isNaN(u)) return false;

@@ -143,12 +143,35 @@
         return navigator.onLine !== false;
     }
 
+    function isPwaOfflineContext() {
+        if (window.DiariOffline && typeof window.DiariOffline.isPwaUiContext === 'function') {
+            return window.DiariOffline.isPwaUiContext();
+        }
+        try {
+            if (window.DiariPWA && typeof window.DiariPWA.isStandalone === 'function' && window.DiariPWA.isStandalone()) {
+                return true;
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return (
+            document.documentElement.classList.contains('diari-pwa-standalone') ||
+            document.documentElement.getAttribute('data-diari-pwa') === 'standalone' ||
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            window.navigator.standalone === true
+        );
+    }
+
     async function shouldActOffline() {
-        if (!window.DiariOffline?.isPwaStandalone?.()) return false;
-        if (typeof window.DiariOffline.shouldActOffline === 'function') {
+        if (!isPwaOfflineContext()) return false;
+        if (!isOnline()) return true;
+        if (typeof window.DiariOffline?.shouldActOffline === 'function') {
             return window.DiariOffline.shouldActOffline();
         }
-        return !isOnline();
+        if (typeof window.DiariOffline?.probeReachability === 'function') {
+            return !(await window.DiariOffline.probeReachability());
+        }
+        return true;
     }
 
     const ENTRY_EDIT_MEDIA_DB = 'diariCoreOfflineEntryEditMedia';
@@ -303,6 +326,9 @@
     }
 
     function isEntryEdited(ent) {
+        if (isPwaOfflineContext() && ent && (ent.pwaEditPending === true || ent.pwaDeletionPending === true)) {
+            return false;
+        }
         if (!ent || !ent.updatedAt) return false;
         const u = new Date(ent.updatedAt).getTime();
         if (Number.isNaN(u)) return false;
@@ -1163,11 +1189,12 @@
             );
             renderImageStrip({ preserveScroll: true, skipBodyResize: true });
 
+            const actOffline = await shouldActOffline();
             let uploadFailures = 0;
             await Promise.all(
                 batch.map(async ({ file, item }) => {
                     try {
-                        if (isOnline() && userId) {
+                        if (!actOffline && isOnline() && userId) {
                             const url = await uploadImageOnlineLocal(file, item.id);
                             setEditorImageUploadState(item.id, {
                                 url,
@@ -1188,7 +1215,7 @@
                 })
             );
             renderImageStrip({ preserveScroll: true, skipBodyResize: true });
-            if (!isOnline()) {
+            if (actOffline || !isOnline()) {
                 void persistDraftImages();
                 persistDraft();
             }
@@ -1388,18 +1415,40 @@
             deleteDialog.hidden = false;
         }
 
+        async function markDeletionPendingLocal() {
+            const uid = userId || getUserId();
+            if (typeof window.DiariOffline?.markEntryDeletionPending === 'function') {
+                return window.DiariOffline.markEntryDeletionPending(entryKey, uid, entry);
+            }
+            const list =
+                window.DiariOffline && typeof window.DiariOffline.readEntriesCache === 'function'
+                    ? window.DiariOffline.readEntriesCache()
+                    : JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
+            const key = String(entryKey);
+            const idx = list.findIndex((e) => String(e?.id ?? '') === key);
+            const patch = {
+                ...(idx >= 0 ? list[idx] : entry),
+                id: key,
+                pwaDeletionPending: true,
+                pwaEditPending: false,
+            };
+            if (idx >= 0) list[idx] = patch;
+            else list.push(patch);
+            localStorage.setItem('diariCoreEntries', JSON.stringify(list));
+            if (uid) localStorage.setItem('diariCoreEntriesOwnerId', String(uid));
+            return true;
+        }
+
         async function runConfirmedDelete() {
             if (signal.aborted || deleteRequestPending) return;
             if (await shouldActOffline()) {
-                if (typeof window.DiariOffline?.markEntryDeletionPending !== 'function') {
-                    closeDeleteDialog();
-                    window.alert('Connect to the internet to delete entries.');
-                    return;
-                }
                 deleteRequestPending = true;
                 deleteConfirmBtn.disabled = true;
                 try {
-                    await window.DiariOffline.markEntryDeletionPending(entryKey, userId);
+                    const queued = await markDeletionPendingLocal();
+                    if (!queued) {
+                        throw new Error('Could not queue deletion');
+                    }
                     closeDeleteDialog();
                     clearDraft();
                     if (window.DiariToast && typeof window.DiariToast.show === 'function') {
@@ -1838,16 +1887,43 @@
                 window.alert('This entry has no text to analyze.');
                 return;
             }
-            if (!isOnline()) {
-                window.alert('Connect to the internet to run analysis.');
-                return;
-            }
             global.DiariMoodAnalysis.resetSession();
             const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
             try {
                 await global.DiariMoodAnalysis.primeMoodAnalysisBookLottie();
             } catch (_) {}
             global.DiariMoodAnalysis.showAnalysisLoading(overlay);
+
+            if (await shouldActOffline()) {
+                try {
+                    let previewEntry = { ...entry, text };
+                    if (window.DiariOffline && typeof window.DiariOffline.analyzeForOffline === 'function') {
+                        const est = await window.DiariOffline.analyzeForOffline(text);
+                        previewEntry = { ...previewEntry, ...est, text };
+                    }
+                    await global.DiariMoodAnalysis.delayUntilMoodAnalysisGate();
+                    const mo = moodOptions(overlay);
+                    global.DiariMoodAnalysis.showAnalysisResult(overlay, previewEntry, true, {
+                        ...mo,
+                        offlineEstimate: true,
+                        footerCloseLabel: 'Close',
+                        onSaveExit() {
+                            overlay.hidden = true;
+                        },
+                    });
+                } catch (e) {
+                    console.error(e);
+                    overlay.hidden = true;
+                    window.alert('Could not show offline analysis preview.');
+                }
+                return;
+            }
+
+            if (!isOnline()) {
+                overlay.hidden = true;
+                window.alert('Connect to the internet to run analysis.');
+                return;
+            }
             try {
                 const res = await fetch('/api/entries/analyze-text', {
                     method: 'POST',
@@ -2220,8 +2296,9 @@
                 if (await shouldActOffline()) {
                     await pushOfflineQueue(reanalyze);
                     const merged = offlineMergedEntry(reanalyze);
+                    const uid = userId || getUserId();
                     if (typeof window.DiariOffline?.markEntryEditPendingInCache === 'function') {
-                        window.DiariOffline.markEntryEditPendingInCache(entryKey, merged, userId);
+                        window.DiariOffline.markEntryEditPendingInCache(entryKey, merged, uid);
                     } else {
                         replaceEntryInList(merged);
                     }
@@ -2229,6 +2306,7 @@
                     baseline = serializeState();
                     clearDraft();
                     renderImageStrip();
+                    syncReadPane();
                     if (reanalyze) {
                         global.DiariMoodAnalysis.resetSession();
                         const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
@@ -2315,25 +2393,40 @@
                     return;
                 }
                 if (!isDirty()) return;
+
+                const actOffline = await shouldActOffline();
                 global.DiariMoodAnalysis.resetSession();
                 const overlay = global.DiariMoodAnalysis.ensureAnalysisOverlay();
-                try {
-                    await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
-                } catch (e) {
-                    console.warn('Could not preload editing animation:', e);
+                if (actOffline) {
+                    try {
+                        await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
+                    } catch (e) {
+                        console.warn('Could not preload editing animation:', e);
+                    }
+                    global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
+                } else {
+                    try {
+                        await global.DiariMoodAnalysis.primeEntryUpdateEditingLottie();
+                    } catch (e) {
+                        console.warn('Could not preload editing animation:', e);
+                    }
+                    global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
                 }
-                global.DiariMoodAnalysis.showEntryUpdateLoading(overlay);
                 let metadataSavedOk = false;
                 try {
                     metadataSavedOk = await runSave(false);
-                    // Keep update overlay long enough to finish its faster progress phase.
-                    await global.DiariMoodAnalysis.delayUntilEntryUpdateGate();
+                    if (actOffline || metadataSavedOk) {
+                        await global.DiariMoodAnalysis.delayUntilEntryUpdateGate();
+                    }
                 } finally {
-                    // If save succeeded, baseline is updated and overlay can close.
                     global.DiariMoodAnalysis.hideAnalysisOverlay(overlay);
                 }
                 if (metadataSavedOk && afterMetadataSaveToEntries) {
                     afterMetadataSaveToEntries();
+                } else if (metadataSavedOk && actOffline) {
+                    if (window.DiariToast && typeof window.DiariToast.show === 'function') {
+                        window.DiariToast.show('Saved offline. Changes will sync when you are back online.', 'info', 4000);
+                    }
                 }
             },
             { signal }
