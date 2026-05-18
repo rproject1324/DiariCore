@@ -366,6 +366,16 @@
         writeDeleteQueue(remaining);
     }
 
+    function hasQueuedEditForEntry(entryKey) {
+        const key = String(entryKey ?? '');
+        return readEditQueue().some((r) => String(r?.entryId ?? '') === key);
+    }
+
+    function hasQueuedDeleteForEntry(entryKey) {
+        const key = String(entryKey ?? '');
+        return readDeleteQueue().some((r) => String(r?.entryId ?? '') === key);
+    }
+
     /** Keep unsynced PWA offline drafts when refreshing from the server. */
     function mergeServerEntriesWithLocal(serverEntries, userId) {
         const server = Array.isArray(serverEntries) ? serverEntries : [];
@@ -384,10 +394,10 @@
             const key = String(s?.id ?? '');
             const loc = localById.get(key);
             if (!loc) return s;
-            if (loc.pwaDeletionPending === true) {
+            if (loc.pwaDeletionPending === true && hasQueuedDeleteForEntry(key)) {
                 return { ...s, pwaDeletionPending: true, pwaEditPending: false };
             }
-            if (loc.pwaEditPending === true) {
+            if (loc.pwaEditPending === true && hasQueuedEditForEntry(key)) {
                 return {
                     ...s,
                     title: loc.title ?? s.title,
@@ -502,6 +512,8 @@
                 pwaDeletionPending: entry.pwaDeletionPending === true,
             };
             if (serverSynced) {
+                patch.pwaEditPending = false;
+                patch.pwaDeletionPending = false;
                 patch.pendingServerAnalysis = false;
                 patch.moodScoringOffline = false;
             }
@@ -1196,6 +1208,7 @@
     }
 
     let connectivityWatchStarted = false;
+    let pwaLastReachable = null;
 
     function startPwaConnectivityWatch() {
         if (connectivityWatchStarted || !isPwaUiContext()) return;
@@ -1210,11 +1223,23 @@
         global.addEventListener('pageshow', kickSync);
 
         global.setInterval(() => {
-            if (!isOnline()) return;
-            void hasPendingOfflineWorkAsync().then((pending) => {
-                if (pending) kickSync();
-            });
-        }, 10000);
+            void (async () => {
+                if (!isOnline()) {
+                    pwaLastReachable = false;
+                    return;
+                }
+                let reachable = true;
+                try {
+                    reachable = await probeReachability();
+                } catch {
+                    reachable = false;
+                }
+                const wasDown = pwaLastReachable === false;
+                pwaLastReachable = reachable;
+                const pending = await hasPendingOfflineWorkAsync();
+                if (reachable && (wasDown || pending)) kickSync();
+            })();
+        }, 5000);
     }
 
     function guardOfflineAuth() {

@@ -117,6 +117,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             initializeEntriesFromStorage({ preserveNavigation: true });
         });
         window.addEventListener('online', () => {
+            entriesPwaReachable = null;
             void runPwaEntriesSyncNow();
         });
         window.addEventListener('pageshow', () => {
@@ -124,9 +125,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && entriesPwaInitialSyncDone) {
-                void runPwaEntriesSyncNow();
+                void tickPwaEntriesConnectivity();
             }
         });
+        startPwaEntriesConnectivityWatch();
     }
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
@@ -169,6 +171,45 @@ async function syncEntriesFromApi() {
 }
 
 let entriesPwaInitialSyncDone = false;
+let entriesPwaReachable = null;
+let entriesPwaConnectivityTimer = null;
+
+async function tickPwaEntriesConnectivity() {
+    if (!isPwaOfflineEntriesUi() || document.visibilityState === 'hidden') return;
+    if (navigator.onLine === false) {
+        entriesPwaReachable = false;
+        return;
+    }
+    let reachable = true;
+    if (typeof window.DiariOffline?.probeReachability === 'function') {
+        try {
+            reachable = await window.DiariOffline.probeReachability();
+        } catch {
+            reachable = false;
+        }
+    }
+    const wasUnreachable = entriesPwaReachable === false;
+    entriesPwaReachable = reachable;
+
+    let pending = false;
+    if (typeof window.DiariOffline?.hasPendingOfflineWorkAsync === 'function') {
+        pending = await window.DiariOffline.hasPendingOfflineWorkAsync();
+    } else if (typeof window.DiariOffline?.hasPendingOfflineWork === 'function') {
+        pending = window.DiariOffline.hasPendingOfflineWork();
+    }
+
+    if (reachable && (wasUnreachable || pending)) {
+        await runPwaEntriesSyncNow();
+    }
+}
+
+function startPwaEntriesConnectivityWatch() {
+    if (!isPwaOfflineEntriesUi() || entriesPwaConnectivityTimer != null) return;
+    entriesPwaConnectivityTimer = window.setInterval(() => {
+        void tickPwaEntriesConnectivity();
+    }, 4000);
+    void tickPwaEntriesConnectivity();
+}
 
 async function runPwaEntriesSyncNow() {
     if (!isPwaOfflineEntriesUi() || navigator.onLine === false) return;

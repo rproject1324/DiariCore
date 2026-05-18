@@ -110,6 +110,22 @@
     }
 
     function replaceEntryInList(updated) {
+        if (!updated) return;
+        const uid = getUserId();
+        if (
+            isPwaOfflineContext() &&
+            typeof window.DiariOffline?.mergeEntryIntoCache === 'function'
+        ) {
+            window.DiariOffline.mergeEntryIntoCache(
+                {
+                    ...updated,
+                    pwaEditPending: updated.pwaEditPending === true,
+                    pwaDeletionPending: updated.pwaDeletionPending === true,
+                },
+                uid
+            );
+            return;
+        }
         const list = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]');
         const key = String(updated?.id ?? '');
         const idx = list.findIndex((e) => String(e?.id ?? '') === key);
@@ -2358,7 +2374,11 @@
                     global.DiariMoodAnalysis.showAnalysisLoading(overlay);
                     try {
                         const data = await patchRemote(true, imageSaveList);
-                        entry = data.entry;
+                        entry = {
+                            ...data.entry,
+                            pwaEditPending: false,
+                            pwaDeletionPending: false,
+                        };
                         editorImages = imageItemsFromUrls(entry.imageUrls || []);
                         replaceEntryInList(entry);
                         const engine = (data.analysisEngine || '').toString().toLowerCase();
@@ -2382,7 +2402,11 @@
 
                 try {
                     const data = await patchRemote(false, imageSaveList);
-                    entry = data.entry;
+                    entry = {
+                        ...data.entry,
+                        pwaEditPending: false,
+                        pwaDeletionPending: false,
+                    };
                     editorImages = imageItemsFromUrls(entry.imageUrls || []);
                     replaceEntryInList(entry);
                     clearDraft();
