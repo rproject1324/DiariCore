@@ -107,7 +107,8 @@
 
     function getUserId() {
         const user = getSessionUser();
-        if (!user?.isLoggedIn) return 0;
+        if (!user) return 0;
+        if (user.isLoggedIn === false) return 0;
         const raw = user.id ?? user.userId ?? 0;
         const n = Number(raw);
         return Number.isInteger(n) && n > 0 ? n : 0;
@@ -164,40 +165,57 @@
         }
     }
 
-    function mergeServerUserIntoLocal(serverUser) {
+    function mergeServerUserIntoLocal(serverUser, options = {}) {
         if (!serverUser || typeof serverUser !== 'object') return false;
         const prev = getSessionUser() || {};
-        const merged = Object.assign({}, prev, serverUser, {
+        const remoteWins = options.remoteWins === true;
+        const hasPending =
+            hasPwaPendingProfile() || hasPwaPendingAvatar() || hasPwaPendingUiPrefs();
+
+        let merged = Object.assign({}, prev, serverUser, {
             isLoggedIn: prev.isLoggedIn !== false,
             loginTime: prev.loginTime || null,
             id: serverUser.id ?? prev.id,
             userId: serverUser.id ?? prev.userId ?? prev.id,
         });
-        if (hasPwaPendingAvatar()) {
-            const pendingAv = readPwaPendingAvatar();
-            if (pendingAv) merged.avatarDataUrl = pendingAv;
-        }
-        if (hasPwaPendingUiPrefs()) {
-            const prefs = readPwaPendingUiPrefs();
-            if (prefs && prefs.uiTheme) merged.uiTheme = prefs.uiTheme;
-            if (prefs && prefs.uiPaletteId) merged.uiPaletteId = prefs.uiPaletteId;
-        }
-        if (hasPwaPendingProfile()) {
-            const pending = readPwaPendingProfile();
-            if (pending && typeof pending === 'object') {
-                Object.assign(merged, pending);
+
+        if (!(remoteWins && !hasPending)) {
+            if (hasPwaPendingAvatar()) {
+                const pendingAv = readPwaPendingAvatar();
+                if (pendingAv) merged.avatarDataUrl = pendingAv;
+            }
+            if (hasPwaPendingUiPrefs()) {
+                const prefs = readPwaPendingUiPrefs();
+                if (prefs && prefs.uiTheme) merged.uiTheme = prefs.uiTheme;
+                if (prefs && prefs.uiPaletteId) merged.uiPaletteId = prefs.uiPaletteId;
+            }
+            if (hasPwaPendingProfile()) {
+                const pending = readPwaPendingProfile();
+                if (pending && typeof pending === 'object') {
+                    Object.assign(merged, pending);
+                }
             }
         }
+
         const prevJson = JSON.stringify(prev);
         const nextJson = JSON.stringify(merged);
-        if (prevJson === nextJson) return false;
+        const changed = prevJson !== nextJson;
         global.localStorage.setItem(USER_KEY, nextJson);
         try {
-            global.dispatchEvent(new CustomEvent('diari-user-updated', { bubbles: true }));
+            if (global.DiariTheme && typeof global.DiariTheme.applyFromUser === 'function') {
+                global.DiariTheme.applyFromUser(merged);
+            }
         } catch (_) {
             /* ignore */
         }
-        return true;
+        if (changed) {
+            try {
+                global.dispatchEvent(new CustomEvent('diari-user-updated', { bubbles: true }));
+            } catch (_) {
+                /* ignore */
+            }
+        }
+        return changed;
     }
 
     function isOfflineLocalEntry(entry) {
@@ -1251,7 +1269,7 @@
             if (!response.ok || !result.success || !result.user) {
                 return { ok: false, offline: false, fromCache: true };
             }
-            mergeServerUserIntoLocal(result.user);
+            mergeServerUserIntoLocal(result.user, { remoteWins: options.remoteWins === true });
             return { ok: true, offline: false };
         } catch (err) {
             console.warn('[DiariOffline] syncUserFromApi failed, using cache:', err);
@@ -1413,6 +1431,7 @@
             await syncUserFromApi({
                 skipReachabilityProbe: true,
                 trustNavigatorOnline: trustNav,
+                remoteWins: opts.remoteWins !== false,
             });
             return { ok: true };
         })()

@@ -169,34 +169,41 @@
         applySuccessColorsFromPrimary(getPaletteById(getSavedPaletteId()).primary);
     }
 
+    function hasPwaPendingUiPrefs() {
+        try {
+            return (
+                window.DiariOffline &&
+                typeof window.DiariOffline.hasPwaPendingUiPrefs === 'function' &&
+                window.DiariOffline.hasPwaPendingUiPrefs()
+            );
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function applyAppearanceFromStoredUser() {
+        if (isAuthPage()) return;
+        let user = null;
+        try {
+            user = JSON.parse(localStorage.getItem('diariCoreUser') || 'null');
+        } catch (_) {
+            user = null;
+        }
+        if (user && user.isLoggedIn && (user.uiTheme || user.uiPaletteId) && !hasPwaPendingUiPrefs()) {
+            applyFromUserObject(user);
+            return;
+        }
+        applyTheme(getSavedTheme());
+        applyPaletteById(getSavedPaletteId());
+    }
+
     function bootstrapAppearance() {
         if (isAuthPage()) {
             applyTheme(DEFAULT_THEME);
             applyPaletteById(DEFAULT_PALETTE_ID);
             return;
         }
-        applyTheme(getSavedTheme());
-        applyPaletteById(getSavedPaletteId());
-        try {
-            const ru = localStorage.getItem('diariCoreUser');
-            if (ru) {
-                const parsed = JSON.parse(ru);
-                const pwaPendingUi =
-                    window.DiariOffline &&
-                    typeof window.DiariOffline.hasPwaPendingUiPrefs === 'function' &&
-                    window.DiariOffline.hasPwaPendingUiPrefs();
-                if (parsed && parsed.isLoggedIn && (parsed.uiTheme || parsed.uiPaletteId) && !pwaPendingUi) {
-                    const lt = getSavedTheme();
-                    const lp = getSavedPaletteId();
-                    const matchesLocal =
-                        (!parsed.uiTheme || parsed.uiTheme === lt) &&
-                        (!parsed.uiPaletteId || parsed.uiPaletteId === lp);
-                    if (matchesLocal) {
-                        applyFromUserObject(parsed);
-                    }
-                }
-            }
-        } catch (_) {}
+        applyAppearanceFromStoredUser();
         syncMobileAvatarEarlyClass();
     }
 
@@ -477,7 +484,11 @@
         syncToggleState();
     });
 
-    document.addEventListener('diari-user-updated', syncMobileAvatarEarlyClass);
+    document.addEventListener('diari-user-updated', function () {
+        syncMobileAvatarEarlyClass();
+        applyAppearanceFromStoredUser();
+    });
+    document.addEventListener('diari-remote-state-refreshed', applyAppearanceFromStoredUser);
 
     window.addEventListener('storage', function (event) {
         if (event.key === 'diariCoreUser') {
