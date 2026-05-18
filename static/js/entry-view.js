@@ -2484,10 +2484,6 @@
                         console.warn('Could not preload editing animation:', e);
                     }
                     global.DiariMoodAnalysis.showEntryUpdateLoading(overlay, { pwaFast: true });
-                    const gatePromise = global.DiariMoodAnalysis.delayUntilEntryUpdateGate({
-                        requireSaveSignal: true,
-                        pwaFast: true,
-                    });
                     let metadataSavedOk = false;
                     try {
                         metadataSavedOk = await runSave(false);
@@ -2498,7 +2494,6 @@
                     if (typeof global.DiariMoodAnalysis.finishEntryUpdateLoading === 'function') {
                         global.DiariMoodAnalysis.finishEntryUpdateLoading();
                     }
-                    await gatePromise;
                     return metadataSavedOk;
                 }
 

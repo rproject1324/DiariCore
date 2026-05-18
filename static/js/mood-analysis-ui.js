@@ -10,7 +10,7 @@
     const MOOD_ANALYSIS_BOOK_LOTTIE_SRC = '/noto-emoji/book.json?v=20260517b';
     const ENTRY_UPDATE_EDITING_LOTTIE_SRC = '/noto-emoji/pencil_write.json?v=20260513d';
     const ENTRY_UPDATE_TOTAL_MS = 4200;
-    const ENTRY_UPDATE_TOTAL_MS_PWA = 1400;
+    const ENTRY_UPDATE_TOTAL_MS_PWA = 900;
     const ENTRY_UPDATE_MIN_AFTER_EDITING_MS = 700;
 
     let moodAnalysisLoadingShownAt = 0;
