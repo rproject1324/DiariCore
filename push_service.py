@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v19"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v20"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
@@ -30,7 +30,10 @@ DISPATCH_WINDOW_MINUTES = max(
 )
 # Do not delete a subscription FCM rejects right after register (token may need a moment).
 PUSH_SUBSCRIPTION_GRACE_SECONDS = max(
-    60, int(os.environ.get("PUSH_SUBSCRIPTION_GRACE_SECONDS", "300"))
+    300, int(os.environ.get("PUSH_SUBSCRIPTION_GRACE_SECONDS", "1800"))
+)
+PUSH_SUBSCRIPTION_MAX_FCM_FAILURES = max(
+    2, int(os.environ.get("PUSH_SUBSCRIPTION_MAX_FCM_FAILURES", "3"))
 )
 
 
@@ -984,15 +987,22 @@ def send_web_push(
             k in msg.lower() for k in ("expired", "unsubscribed", "not registered")
         )
         if dead_sub and endpoint:
-            if _subscription_recently_registered(subscription):
+            fail_count = db.increment_push_subscription_fcm_failures(endpoint)
+            recently = _subscription_recently_registered(subscription)
+            if recently or fail_count < PUSH_SUBSCRIPTION_MAX_FCM_FAILURES:
+                reason = (
+                    f"registered <{PUSH_SUBSCRIPTION_GRACE_SECONDS}s ago"
+                    if recently
+                    else f"fcm_fail={fail_count}/{PUSH_SUBSCRIPTION_MAX_FCM_FAILURES}"
+                )
                 print(
                     f"[diari-push-send] FAIL tag={tag} target={ep_hint} "
-                    f"expired but kept (registered <{PUSH_SUBSCRIPTION_GRACE_SECONDS}s ago)",
+                    f"expired but kept ({reason})",
                     flush=True,
                 )
                 return (
                     False,
-                    "Push not ready yet on this phone — wait 30s and tap Test daily nudge now.",
+                    "Push not ready yet on this phone — open DiariCore from home screen for a few seconds.",
                 )
             db.delete_push_subscription_by_endpoint(endpoint)
         if code in (401, 403):

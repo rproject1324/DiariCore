@@ -1939,6 +1939,7 @@ def upsert_push_subscription(
     if not endpoint:
         return False
     sub = dict(subscription)
+    sub.pop("_fcmFailCount", None)
     vp = str(vapid_public_key or "").strip()
     if vp:
         sub["_vapidPublicKey"] = vp
@@ -1975,6 +1976,64 @@ def upsert_push_subscription(
     except Exception:
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+
+def increment_push_subscription_fcm_failures(endpoint: str) -> int:
+    """Bump FCM failure counter stored in subscription_json; returns new count."""
+    endpoint = str(endpoint or "").strip()
+    if not endpoint:
+        return 0
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute(
+                "SELECT subscription_json FROM push_subscriptions WHERE endpoint = %s",
+                (endpoint,),
+            )
+        else:
+            cur.execute(
+                "SELECT subscription_json FROM push_subscriptions WHERE endpoint = ?",
+                (endpoint,),
+            )
+        row = cur.fetchone()
+        if not row:
+            return 0
+        d = row_to_dict(row)
+        try:
+            sub = json.loads(d.get("subscription_json") or "{}")
+        except Exception:
+            sub = {}
+        if not isinstance(sub, dict):
+            sub = {}
+        count = int(sub.get("_fcmFailCount") or 0) + 1
+        sub["_fcmFailCount"] = count
+        blob = json.dumps(sub, separators=(",", ":"))
+        if USE_POSTGRES:
+            cur.execute(
+                """
+                UPDATE push_subscriptions
+                SET subscription_json = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE endpoint = %s
+                """,
+                (blob, endpoint),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE push_subscriptions
+                SET subscription_json = ?, updated_at = datetime('now')
+                WHERE endpoint = ?
+                """,
+                (blob, endpoint),
+            )
+        conn.commit()
+        return count
+    except Exception:
+        conn.rollback()
+        return 0
     finally:
         conn.close()
 

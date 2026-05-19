@@ -320,7 +320,7 @@
     async function maintainPushRegistration(options) {
         const force = !!(options && options.force);
         const now = Date.now();
-        if (!force && now - lastMaintainAttemptMs < 45000) {
+        if (!force && now - lastMaintainAttemptMs < 120000) {
             return { ok: true, skipped: true };
         }
         if (maintainInFlight) {
@@ -345,10 +345,7 @@
         global.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'visible') {
                 void maintainPushRegistration();
-            } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                void syncPushSubscriptionToServer().catch(function () {
-                    /* ignore */
-                });
+            } else if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
                 syncNotificationPrefsToServerBeacon();
             }
         });
@@ -356,10 +353,7 @@
             void maintainPushRegistration({ force: true });
         });
         global.addEventListener('pagehide', function () {
-            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                void syncPushSubscriptionToServer().catch(function () {
-                    /* ignore */
-                });
+            if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
                 syncNotificationPrefsToServerBeacon();
             }
         });
