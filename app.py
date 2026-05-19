@@ -26,6 +26,7 @@ import db
 import input_security as insec
 import password_policy
 import space_nlp
+import push_service
 
 ENTRY_WORD_MAX = int(os.environ.get("ENTRY_WORD_MAX", "300"))
 
@@ -2493,6 +2494,81 @@ def static_files(filename):
     if os.path.abspath(full).startswith(os.path.abspath(BASE_DIR)) and os.path.isfile(full):
         return send_from_directory(BASE_DIR, safe)
     abort(404)
+
+
+@app.route("/api/push/vapid-public-key", methods=["GET"])
+def api_push_vapid_public_key():
+    """PWA Web Push: public VAPID key for PushManager.subscribe."""
+    key = push_service.vapid_public_key()
+    if not key:
+        return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
+    return jsonify({"success": True, "publicKey": key}), 200
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+def api_push_subscribe():
+    """Save browser PushSubscription for the logged-in user (PWA true push)."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    data = request.get_json(silent=True) or {}
+    sub = data.get("subscription") if isinstance(data.get("subscription"), dict) else data
+    if not isinstance(sub, dict) or not sub.get("endpoint"):
+        return jsonify({"success": False, "error": "Invalid push subscription."}), 400
+    if not push_service.push_configured():
+        return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
+    if not db.upsert_push_subscription(user_id, sub):
+        return jsonify({"success": False, "error": "Could not save subscription."}), 500
+    notif = data.get("notifications")
+    if isinstance(notif, dict):
+        db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
+    return jsonify({"success": True, "webPush": True}), 200
+
+
+@app.route("/api/push/unsubscribe", methods=["POST"])
+def api_push_unsubscribe():
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    data = request.get_json(silent=True) or {}
+    endpoint = str(data.get("endpoint") or "").strip()
+    if not endpoint:
+        return jsonify({"success": False, "error": "endpoint is required."}), 400
+    db.delete_push_subscription(user_id, endpoint)
+    return jsonify({"success": True}), 200
+
+
+@app.route("/api/push/preferences", methods=["POST"])
+def api_push_preferences():
+    """Sync PWA notification toggles + reminder time to server for cron dispatch."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    data = request.get_json(silent=True) or {}
+    patch = {}
+    if "notifications" in data and isinstance(data["notifications"], dict):
+        patch["notifications"] = data["notifications"]
+    if not patch:
+        return jsonify({"success": False, "error": "Provide notifications object."}), 400
+    if not db.merge_user_ui_preferences_json(user_id, patch):
+        return jsonify({"success": False, "error": "Could not save preferences."}), 500
+    return jsonify({"success": True}), 200
+
+
+@app.route("/api/internal/push/dispatch", methods=["POST"])
+def api_internal_push_dispatch():
+    """
+    Cron endpoint: send due Web Push notifications (true push when app is closed).
+    Header: X-Push-Cron-Secret must match PUSH_CRON_SECRET.
+    """
+    secret = (os.environ.get("PUSH_CRON_SECRET") or "").strip()
+    if not secret:
+        return jsonify({"success": False, "error": "PUSH_CRON_SECRET not set."}), 503
+    provided = (request.headers.get("X-Push-Cron-Secret") or "").strip()
+    if provided != secret:
+        abort(403)
+    result = push_service.dispatch_due_notifications()
+    return jsonify({"success": True, **result}), 200
 
 
 if __name__ == "__main__":

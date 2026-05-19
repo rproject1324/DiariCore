@@ -246,6 +246,7 @@
             'most-active-time.js',
             'pwa-notification-idb.js',
             'pwa-notification-templates.js',
+            'pwa-web-push.js',
             'pwa-notifications.js',
         ].forEach(loadScriptOnce);
     }

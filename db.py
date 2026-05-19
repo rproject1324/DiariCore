@@ -260,6 +260,42 @@ def _ensure_user_profile_email_change_challenges_table(cur):
         )
 
 
+def _ensure_push_subscriptions_table(cur):
+    if USE_POSTGRES:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                endpoint TEXT NOT NULL UNIQUE,
+                subscription_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions (user_id);"
+        )
+    else:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                endpoint TEXT NOT NULL UNIQUE,
+                subscription_json TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions (user_id);"
+        )
+
+
 def _parse_expires_at(val):
     if val is None:
         return None
@@ -457,6 +493,7 @@ def init_db():
         _ensure_login_totp_recovery_otps_table(cur)
         _ensure_user_password_change_challenges_table(cur)
         _ensure_user_profile_email_change_challenges_table(cur)
+        _ensure_push_subscriptions_table(cur)
         if USE_POSTGRES:
             cur.execute(
                 """
@@ -1839,6 +1876,172 @@ def create_journal_entry(
             (entry_id,),
         )
         return row_to_dict(cur.fetchone())
+    finally:
+        conn.close()
+
+
+def _load_ui_preferences_blob(user_id: int) -> dict:
+    row = get_user_by_id(user_id)
+    if not row:
+        return {}
+    raw = row.get("ui_preferences_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return {}
+
+
+def merge_user_ui_preferences_json(user_id: int, patch: dict) -> bool:
+    """Deep-merge patch into users.ui_preferences_json (push prefs, pushState, theme, etc.)."""
+    if not isinstance(user_id, int) or user_id <= 0 or not isinstance(patch, dict):
+        return False
+    cur_blob = _load_ui_preferences_blob(user_id)
+    for key, val in patch.items():
+        if isinstance(val, dict) and isinstance(cur_blob.get(key), dict):
+            merged = dict(cur_blob[key])
+            merged.update(val)
+            cur_blob[key] = merged
+        else:
+            cur_blob[key] = val
+    blob = json.dumps(cur_blob, separators=(",", ":"))
+    conn = get_conn()
+    cur_sql = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur_sql.execute(
+                "UPDATE users SET ui_preferences_json = %s WHERE id = %s",
+                (blob, user_id),
+            )
+        else:
+            cur_sql.execute(
+                "UPDATE users SET ui_preferences_json = ? WHERE id = ?",
+                (blob, user_id),
+            )
+        conn.commit()
+        return cur_sql.rowcount > 0
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def upsert_push_subscription(user_id: int, subscription: dict) -> bool:
+    if not isinstance(user_id, int) or user_id <= 0 or not isinstance(subscription, dict):
+        return False
+    endpoint = str(subscription.get("endpoint") or "").strip()
+    if not endpoint:
+        return False
+    blob = json.dumps(subscription, separators=(",", ":"))
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute(
+                """
+                INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (endpoint) DO UPDATE SET
+                    user_id = EXCLUDED.user_id,
+                    subscription_json = EXCLUDED.subscription_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, endpoint, blob),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, updated_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(endpoint) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    subscription_json = excluded.subscription_json,
+                    updated_at = datetime('now')
+                """,
+                (user_id, endpoint, blob),
+            )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def delete_push_subscription(user_id: int, endpoint: str) -> bool:
+    if not isinstance(user_id, int) or user_id <= 0:
+        return False
+    endpoint = str(endpoint or "").strip()
+    if not endpoint:
+        return False
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute(
+                "DELETE FROM push_subscriptions WHERE user_id = %s AND endpoint = %s",
+                (user_id, endpoint),
+            )
+        else:
+            cur.execute(
+                "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+                (user_id, endpoint),
+            )
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def delete_push_subscription_by_endpoint(endpoint: str) -> bool:
+    endpoint = str(endpoint or "").strip()
+    if not endpoint:
+        return False
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute("DELETE FROM push_subscriptions WHERE endpoint = %s", (endpoint,))
+        else:
+            cur.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+        conn.commit()
+        return cur.rowcount > 0
+    except Exception:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+
+def list_push_subscriptions_grouped_by_user():
+    """Return {user_id: [subscription_dict, ...]}."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT user_id, subscription_json FROM push_subscriptions ORDER BY user_id, id"
+        )
+        grouped: dict[int, list] = {}
+        for row in cur.fetchall():
+            d = row_to_dict(row)
+            uid = int(d.get("user_id") or 0)
+            if uid <= 0:
+                continue
+            try:
+                sub = json.loads(d.get("subscription_json") or "{}")
+            except Exception:
+                continue
+            if isinstance(sub, dict) and sub.get("endpoint"):
+                grouped.setdefault(uid, []).append(sub)
+        return grouped
     finally:
         conn.close()
 

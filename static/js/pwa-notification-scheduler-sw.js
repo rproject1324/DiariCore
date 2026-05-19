@@ -249,6 +249,28 @@ async function runNotificationChecks() {
     }
 }
 
+self.addEventListener('push', (event) => {
+    let payload = { title: 'DiariCore', body: '', url: '/dashboard.html' };
+    try {
+        if (event.data) {
+            const parsed = event.data.json();
+            if (parsed && typeof parsed === 'object') payload = { ...payload, ...parsed };
+        }
+    } catch (_) {
+        /* ignore */
+    }
+    event.waitUntil(
+        self.registration.showNotification(payload.title || 'DiariCore', {
+            body: payload.body || '',
+            tag: 'diari-web-push',
+            renotify: true,
+            icon: '/diariclogo.png',
+            badge: '/diariclogo.png',
+            data: { url: payload.url || '/dashboard.html' },
+        })
+    );
+});
+
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
     const url = event.notification?.data?.url || '/dashboard.html';

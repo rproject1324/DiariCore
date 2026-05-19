@@ -1,0 +1,420 @@
+"""
+Web Push (VAPID) — true server push for PWA. Free; no Firebase required.
+Set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CLAIM_EMAIL, PUSH_CRON_SECRET on Railway.
+Run scripts/generate_vapid_keys.py once, then scripts/export_push_templates.py after template edits.
+"""
+from __future__ import annotations
+
+import json
+import os
+import random
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import db
+
+NOTIFY_TZ = ZoneInfo("Asia/Manila")
+MS_PER_DAY = 86400000
+BASE_DIR = Path(__file__).resolve().parent
+_TEMPLATES: dict | None = None
+
+
+def _load_templates() -> dict:
+    global _TEMPLATES
+    if _TEMPLATES is not None:
+        return _TEMPLATES
+    path = BASE_DIR / "static" / "push-templates.json"
+    with open(path, encoding="utf-8") as f:
+        _TEMPLATES = json.load(f)
+    return _TEMPLATES
+
+
+def vapid_public_key() -> str | None:
+    return (os.environ.get("VAPID_PUBLIC_KEY") or "").strip() or None
+
+
+def vapid_private_key() -> str | None:
+    return (os.environ.get("VAPID_PRIVATE_KEY") or "").strip() or None
+
+
+def vapid_claim_email() -> str:
+    email = (os.environ.get("VAPID_CLAIM_EMAIL") or "mailto:support@diaricore.app").strip()
+    if not email.startswith("mailto:"):
+        email = f"mailto:{email}"
+    return email
+
+
+def push_configured() -> bool:
+    return bool(vapid_public_key() and vapid_private_key())
+
+
+def _manila_now() -> datetime:
+    return datetime.now(NOTIFY_TZ)
+
+
+def _manila_date_key(dt: datetime | None = None) -> str:
+    d = dt or _manila_now()
+    return d.strftime("%Y-%m-%d")
+
+
+def _manila_hm(dt: datetime | None = None) -> tuple[int, int]:
+    d = dt or _manila_now()
+    return d.hour, d.minute
+
+
+def _parse_hhmm(s: str) -> tuple[int, int] | None:
+    m = re.match(r"^(\d{2}):(\d{2})$", str(s or "").strip())
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def _entry_manila_date_key(entry: dict) -> str:
+    raw = entry.get("createdAt") or entry.get("created_at") or entry.get("date")
+    if not raw:
+        return ""
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(NOTIFY_TZ).strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def _serialize_entries_for_user(user_id: int) -> list[dict]:
+    rows = db.get_journal_entries_by_user(user_id)
+    out = []
+    for row in rows:
+        tags = []
+        if row.get("tags_json"):
+            try:
+                tags = json.loads(row["tags_json"])
+            except Exception:
+                pass
+        emo = (row.get("emotion_label") or "neutral").lower()
+        created = row.get("created_at")
+        entry_dt = row.get("entry_datetime_utc")
+        date_val = entry_dt or created
+        out.append(
+            {
+                "id": row.get("id"),
+                "title": row.get("title") or "",
+                "text": row.get("text_content") or "",
+                "date": date_val,
+                "createdAt": created,
+                "emotionLabel": emo,
+                "feeling": emo,
+            }
+        )
+    return out
+
+
+def _has_entry_today_manila(entries: list[dict]) -> bool:
+    today = _manila_date_key()
+    return any(_entry_manila_date_key(e) == today for e in entries)
+
+
+def _compute_streak(entries: list[dict]) -> int:
+    day_set: set[str] = set()
+    for e in entries:
+        k = _entry_manila_date_key(e)
+        if k:
+            day_set.add(k)
+    if not day_set:
+        return 0
+    today = _manila_date_key()
+    yesterday = (_manila_now().date() - timedelta(days=1)).isoformat()
+    if today in day_set:
+        anchor = today
+    elif yesterday in day_set:
+        anchor = yesterday
+    else:
+        return 0
+    streak = 0
+    d = datetime.strptime(anchor, "%Y-%m-%d").date()
+    while True:
+        key = d.isoformat()
+        if key not in day_set:
+            break
+        streak += 1
+        d -= timedelta(days=1)
+    return streak
+
+
+def _most_active_hour_hhmm(entries: list[dict]) -> str:
+    buckets = [0] * 24
+    for e in entries:
+        raw = e.get("createdAt") or e.get("date")
+        if not raw:
+            continue
+        try:
+            s = str(raw).strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            h = dt.astimezone(NOTIFY_TZ).hour
+            buckets[h] += 1
+        except Exception:
+            continue
+    peak = max(range(24), key=lambda i: buckets[i])
+    if buckets[peak] <= 0:
+        return "09:00"
+    return f"{peak:02d}:00"
+
+
+def _user_notification_prefs(user_id: int) -> dict:
+    blob = db._load_ui_preferences_blob(user_id)
+    n = blob.get("notifications")
+    if not isinstance(n, dict):
+        n = {}
+    return {
+        "dailyEnabled": n.get("dailyEnabled", True) is not False,
+        "streakEnabled": n.get("streakEnabled", True) is not False,
+        "insightEnabled": n.get("insightEnabled", True) is not False,
+        "reminderTimeOverride": (n.get("reminderTimeOverride") or "").strip(),
+    }
+
+
+def _user_push_state(user_id: int) -> dict:
+    blob = db._load_ui_preferences_blob(user_id)
+    s = blob.get("pushState")
+    return s if isinstance(s, dict) else {}
+
+
+def _save_push_state(user_id: int, state: dict) -> None:
+    db.merge_user_ui_preferences_json(user_id, {"pushState": state})
+
+
+def _pick(pool: list) -> str:
+    if not pool:
+        return ""
+    return random.choice(pool)
+
+
+def _fill(tpl: str, **kwargs) -> str:
+    return re.sub(
+        r"\{(\w+)\}",
+        lambda m: str(kwargs.get(m.group(1), "")),
+        tpl or "",
+    )
+
+
+def _build_daily_body() -> str:
+    return _pick(_load_templates().get("daily") or [])
+
+
+def _build_streak_body(phase: str, streak: int) -> str:
+    key = "streak30min" if phase == "30min" else "streak1hr"
+    return _fill(_pick(_load_templates().get(key) or []), streak=max(1, streak))
+
+
+def _mood_bucket(mood: str) -> str:
+    m = (mood or "neutral").lower()
+    if m == "happy":
+        return "high"
+    if m in ("sad", "angry", "anxious"):
+        return "low"
+    if m == "neutral":
+        return "neutral"
+    return "mid"
+
+
+def _reflective_tone(mood: str) -> str:
+    return (_load_templates().get("toneByMood") or {}).get(
+        (mood or "neutral").lower(), "mixed or shifting feelings"
+    )
+
+
+def _build_insight_body(entry: dict) -> str:
+    t = _load_templates()
+    mood = (entry.get("emotionLabel") or entry.get("feeling") or "neutral").lower()
+    bucket = _mood_bucket(mood)
+    pool_key = {
+        "high": "insightHigh",
+        "low": "insightLow",
+        "neutral": "insightNeutral",
+        "mid": "insightMid",
+    }[bucket]
+    phrase_key = {
+        "high": "phrasesHigh",
+        "low": "phrasesLow",
+        "neutral": "phrasesNeutral",
+        "mid": "phrasesMid",
+    }[bucket]
+    title = (entry.get("title") or "").strip()[:60] or "your recent entry"
+    text = (entry.get("text") or "").strip()
+    snippet = (text.split("\n")[0][:60] if text else title) or title
+    insight = _pick(t.get(phrase_key) or [])
+    tone = _reflective_tone(mood)
+    return _fill(
+        _pick(t.get(pool_key) or []),
+        tone=tone,
+        insight=insight,
+        title=title,
+        snippet=snippet,
+    )
+
+
+def send_web_push(subscription: dict, title: str, body: str, url: str = "/write-entry.html") -> bool:
+    if not push_configured():
+        return False
+    try:
+        from pywebpush import WebPushException, webpush
+    except ImportError:
+        return False
+    payload = json.dumps({"title": title, "body": body, "url": url})
+    try:
+        webpush(
+            subscription_info=subscription,
+            data=payload,
+            vapid_private_key=vapid_private_key(),
+            vapid_claims={"sub": vapid_claim_email()},
+        )
+        return True
+    except WebPushException as ex:
+        status = getattr(ex, "response", None)
+        code = getattr(status, "status_code", None) if status else None
+        if code in (404, 410):
+            endpoint = subscription.get("endpoint")
+            if endpoint:
+                db.delete_push_subscription_by_endpoint(endpoint)
+        return False
+    except Exception:
+        return False
+
+
+def _should_fire_insight(state: dict, entry: dict, today_key: str) -> bool:
+    if not entry or entry.get("id") is None:
+        return False
+    eid = str(entry["id"])
+    if state.get("lastInsightEntryId") == eid and state.get("lastInsightDateKey") == today_key:
+        return False
+    raw = entry.get("createdAt") or entry.get("date")
+    try:
+        s = str(raw).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - dt).total_seconds()
+    except Exception:
+        return False
+    min_delay = 45 * 60
+    four_h = 4 * 3600
+    if elapsed < min_delay:
+        return False
+    if four_h <= elapsed < 36 * 3600:
+        return True
+    h, m = _manila_hm()
+    entry_day = _entry_manila_date_key(entry)
+    return h == 10 and m == 0 and entry_day != today_key
+
+
+def dispatch_due_notifications() -> dict:
+    """
+    Called by cron every minute. Sends Web Push to subscribed PWA users.
+    Returns summary stats.
+    """
+    if not push_configured():
+        return {"ok": False, "error": "VAPID keys not configured", "sent": 0}
+
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    now = _manila_now()
+    today_key = _manila_date_key(now)
+    h, m = _manila_hm(now)
+    sent = 0
+    errors = 0
+
+    for user_id, subs in grouped.items():
+        if not subs:
+            continue
+        entries = _serialize_entries_for_user(user_id)
+        prefs = _user_notification_prefs(user_id)
+        state = dict(_user_push_state(user_id))
+        state_dirty = False
+
+        if _has_entry_today_manila(entries):
+            continue
+
+        reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
+            _most_active_hour_hhmm(entries)
+        )
+
+        def _push_all(title: str, body: str, url: str) -> bool:
+            nonlocal sent, errors
+            ok_any = False
+            for sub in subs:
+                if send_web_push(sub, title, body, url):
+                    sent += 1
+                    ok_any = True
+                else:
+                    errors += 1
+            return ok_any
+
+        if (
+            prefs["dailyEnabled"]
+            and reminder
+            and h == reminder[0]
+            and m == reminder[1]
+            and state.get("lastDailyReminderDateKey") != today_key
+        ):
+            if _push_all(
+                "A gentle journal nudge",
+                _build_daily_body(),
+                "/write-entry.html",
+            ):
+                state["lastDailyReminderDateKey"] = today_key
+                state_dirty = True
+
+        streak = _compute_streak(entries)
+        if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:
+            if (
+                h == 23
+                and m == 0
+                and state.get("lastStreak1hrDateKey") != today_key
+            ):
+                if _push_all(
+                    "Your streak tonight",
+                    _build_streak_body("1hr", streak),
+                    "/write-entry.html",
+                ):
+                    state["lastStreak1hrDateKey"] = today_key
+                    state_dirty = True
+            if (
+                h == 23
+                and m == 30
+                and state.get("lastStreak30minDateKey") != today_key
+            ):
+                if _push_all(
+                    "Before the day ends",
+                    _build_streak_body("30min", streak),
+                    "/write-entry.html",
+                ):
+                    state["lastStreak30minDateKey"] = today_key
+                    state_dirty = True
+
+        if prefs["insightEnabled"] and entries:
+            last = entries[0]
+            if _should_fire_insight(state, last, today_key):
+                if _push_all(
+                    "Following up on your journal",
+                    _build_insight_body(last),
+                    "/entries.html",
+                ):
+                    state["lastInsightEntryId"] = str(last.get("id"))
+                    state["lastInsightDateKey"] = today_key
+                    state_dirty = True
+
+        if state_dirty:
+            _save_push_state(user_id, state)
+
+    return {"ok": True, "sent": sent, "errors": errors, "users": len(grouped)}

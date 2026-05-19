@@ -218,6 +218,16 @@
         }
         const result = await Notification.requestPermission();
         await syncPrefsToWorker();
+        if (result === 'granted' && global.DiariPwaWebPush?.subscribeWebPush) {
+            try {
+                await global.DiariPwaWebPush.subscribeWebPush();
+                if (global.DiariPwaNotifications?.stopScheduler) {
+                    global.DiariPwaNotifications.stopScheduler();
+                }
+            } catch (e) {
+                console.warn('[DiariPwaNotifications] Web Push subscribe failed:', e);
+            }
+        }
         return result;
     }
 
@@ -295,6 +305,9 @@
                     setDailyRemindersEnabled(dailyToggle.checked);
                     if (dailyToggle.checked) await requestPermissionIfNeeded();
                     await syncPrefsToWorker();
+                    if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
+                        void global.DiariPwaWebPush.syncNotificationPrefsToServer();
+                    }
                 });
             }
         }
@@ -303,7 +316,12 @@
             timeInput.value = getEffectiveReminderHHmm();
             if (timeInput.dataset.pwaNotifyTimeBound !== '1') {
                 timeInput.dataset.pwaNotifyTimeBound = '1';
-                timeInput.addEventListener('change', () => void syncPrefsToWorker());
+                timeInput.addEventListener('change', () => {
+                    void syncPrefsToWorker();
+                    if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
+                        void global.DiariPwaWebPush.syncNotificationPrefsToServer();
+                    }
+                });
             }
         }
     }
@@ -334,6 +352,19 @@
             const asked = global.localStorage.getItem(PERMISSION_ASKED_KEY);
             if (isDailyRemindersEnabled() && !asked && Notification?.permission === 'default') {
                 await requestPermissionIfNeeded();
+            } else if (
+                Notification?.permission === 'granted' &&
+                global.DiariPwaWebPush?.subscribeWebPush &&
+                !global.DiariPwaWebPush.isWebPushActive()
+            ) {
+                try {
+                    await global.DiariPwaWebPush.subscribeWebPush();
+                } catch (_) {
+                    /* fall back to local scheduler */
+                }
+            }
+            if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
+                void global.DiariPwaWebPush.syncNotificationPrefsToServer();
             }
             startScheduler();
         })();
