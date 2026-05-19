@@ -2716,6 +2716,66 @@ function hydrateProfileReminderTimeInput() {
     input.value = user || computeSuggestedReminderTimeHHmm();
 }
 
+/**
+ * Server-side daily Web Push uses ui_preferences_json; pwa-web-push.js loads async after this file,
+ * so DiariPwaWebPush is often missing when the user changes reminder time — sync from here always.
+ */
+function buildPushNotificationPrefsPayloadForServer() {
+    let reminderTimeOverride = '';
+    try {
+        const o = localStorage.getItem(REMINDER_TIME_USER_OVERRIDE_KEY);
+        if (o && /^\d{2}:\d{2}$/.test(String(o).trim())) {
+            reminderTimeOverride = String(o).trim();
+        } else {
+            const input = document.getElementById('profileReminderTimeInput');
+            if (input && input.value && /^\d{2}:\d{2}$/.test(input.value)) {
+                reminderTimeOverride = input.value;
+            }
+        }
+    } catch (_) {
+        /* ignore */
+    }
+    let dailyEnabled = true;
+    let streakEnabled = true;
+    let insightEnabled = true;
+    try {
+        dailyEnabled = localStorage.getItem('diariCorePwaDailyRemindersEnabled') !== '0';
+        streakEnabled = localStorage.getItem('diariCorePwaStreakRemindersEnabled') !== '0';
+        insightEnabled = localStorage.getItem('diariCorePwaInsightFollowupsEnabled') !== '0';
+    } catch (_) {
+        /* ignore */
+    }
+    const dailyToggle = document.getElementById('toggleDailyReminders');
+    if (dailyToggle) {
+        dailyEnabled = !!dailyToggle.checked;
+    }
+    return {
+        notifications: {
+            dailyEnabled,
+            streakEnabled,
+            insightEnabled,
+            reminderTimeOverride,
+        },
+    };
+}
+
+async function syncPushNotificationPrefsToServerFromProfile() {
+    try {
+        const res = await fetch('/api/push/preferences', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(buildPushNotificationPrefsPayloadForServer()),
+        });
+        if (!res.ok) {
+            const t = await res.text().catch(() => '');
+            console.warn('[Profile] push notification prefs sync failed', res.status, t);
+        }
+    } catch (e) {
+        console.warn('[Profile] push notification prefs sync error', e);
+    }
+}
+
 function initializeReminderTimePreference() {
     const input = document.getElementById('profileReminderTimeInput');
     if (!input || input.dataset.reminderTimeBound === '1') return;
@@ -2739,6 +2799,7 @@ function initializeReminderTimePreference() {
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
             void window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }
+        void syncPushNotificationPrefsToServerFromProfile();
     });
 }
 
@@ -2780,6 +2841,25 @@ function initializePreferenceToggles() {
                     }
                     window.DiariTheme.setTheme(nextTheme);
                     showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
+                    return;
+                }
+
+                if (toggle.id === 'toggleDailyReminders') {
+                    try {
+                        localStorage.setItem('diariCorePwaDailyRemindersEnabled', isChecked ? '1' : '0');
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    if (window.DiariPwaNotifications?.syncPrefsToWorker) {
+                        void window.DiariPwaNotifications.syncPrefsToWorker();
+                    }
+                    if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
+                        void window.DiariPwaWebPush.syncNotificationPrefsToServer();
+                    }
+                    await syncPushNotificationPrefsToServerFromProfile();
+                    if (!(await isPwaOfflineForUserActions())) {
+                        showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
+                    }
                     return;
                 }
 
@@ -3001,6 +3081,7 @@ function openProfileSection(sectionKey) {
         if (window.DiariPwaNotifications?.hydrateProfileNotificationUi) {
             window.DiariPwaNotifications.hydrateProfileNotificationUi();
         }
+        void syncPushNotificationPrefsToServerFromProfile();
     }
     if (sectionKey === 'personal-information') {
         hydratePersonalInfoPanel();
