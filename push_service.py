@@ -432,13 +432,11 @@ def send_web_push(
         return False, "pywebpush not installed on server"
     payload = json.dumps({"title": title, "body": body, "url": url})
     try:
-        pem = vapid.private_pem()
-        if isinstance(pem, bytes):
-            pem = pem.decode()
+        # pywebpush treats str keys via Vapid.from_string (raw/der), not PEM — pass instance.
         webpush(
             subscription_info=subscription,
             data=payload,
-            vapid_private_key=pem,
+            vapid_private_key=vapid,
             vapid_claims={"sub": vapid_claim_email()},
         )
         return True, None
