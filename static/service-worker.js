@@ -78,20 +78,6 @@ self.addEventListener('push', (event) => {
     event.waitUntil(
         (async () => {
             try {
-                await fetch('/api/push/delivery-ack', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        tag: notifTag,
-                        title,
-                        receivedAt: new Date().toISOString(),
-                    }),
-                });
-            } catch (e) {
-                console.warn('[PWA SW] delivery-ack failed:', e);
-            }
-            try {
                 await self.registration.showNotification(title, {
                     body,
                     tag: notifTag,
@@ -106,7 +92,29 @@ self.addEventListener('push', (event) => {
             } catch (e) {
                 console.warn('[PWA SW] showNotification failed:', e);
             }
+            fetch('/api/push/delivery-ack', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tag: notifTag,
+                    title,
+                    receivedAt: new Date().toISOString(),
+                }),
+            }).catch(function (e) {
+                console.warn('[PWA SW] delivery-ack failed:', e);
+            });
         })()
+    );
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+            for (const client of clients) {
+                client.postMessage({ type: 'DIARI_PUSH_SUBSCRIPTION_CHANGE' });
+            }
+        })
     );
 });
 
