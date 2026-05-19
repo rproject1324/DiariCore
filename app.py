@@ -2486,7 +2486,7 @@ def api_push_subscribe():
     pruned = 0
     if data.get("keepThisDeviceOnly") is not False and endpoint:
         pruned = db.prune_push_subscriptions_for_user(
-            user_id, keep_endpoint=endpoint, max_keep=2
+            user_id, keep_endpoint=endpoint, max_keep=1
         )
     notif = data.get("notifications")
     if isinstance(notif, dict):
@@ -2559,6 +2559,26 @@ def api_push_schedule_status():
         return auth_err
     return jsonify(
         {"success": True, **push_service.schedule_status_for_user(user_id)}
+    ), 200
+
+
+@app.route("/api/push/prune-devices", methods=["POST"])
+def api_push_prune_devices():
+    """Keep only this phone's push endpoint (newest registration)."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    data = request.get_json(silent=True) or {}
+    endpoint = str(data.get("endpoint") or "").strip()
+    pruned = db.prune_push_subscriptions_for_user(
+        user_id, keep_endpoint=endpoint or None, max_keep=1
+    )
+    return jsonify(
+        {
+            "success": True,
+            "pruned": pruned,
+            "schedule": push_service.schedule_status_for_user(user_id),
+        }
     ), 200
 
 

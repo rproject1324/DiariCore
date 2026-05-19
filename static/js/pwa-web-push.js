@@ -181,10 +181,33 @@
         }
     }
 
+    async function registerThisPhoneOnly() {
+        if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
+        const subscribed = await subscribeWebPush();
+        if (!subscribed) return { ok: false, error: 'Could not subscribe this phone' };
+        let endpoint = '';
+        try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.getSubscription();
+            endpoint = sub && sub.endpoint ? sub.endpoint : '';
+        } catch (_) {
+            /* ignore */
+        }
+        const res = await fetch('/api/push/prune-devices', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint }),
+        });
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok && data.success, ...data };
+    }
+
     global.DiariPwaWebPush = {
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
+        registerThisPhoneOnly,
         confirmWebPushWithServerTest,
         sendTestPush,
         syncNotificationPrefsToServer,

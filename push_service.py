@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v11"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v12"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -559,7 +559,7 @@ def schedule_status_for_user(user_id: int) -> dict:
         "subscriptionWarning": (
             f"You have {devices} registered devices. Reminders may go to an old phone or browser tab. "
             "In Profile → Preferences tap “Use this phone only”, then test again."
-            if devices > 2
+            if devices > 1
             else None
         ),
         "internalCronDisabled": internal_off,
@@ -854,6 +854,11 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
     for user_id, subs in grouped.items():
         if not subs:
             continue
+        if len(subs) > 1:
+            db.prune_push_subscriptions_for_user(user_id, max_keep=1)
+            subs = db.list_push_subscriptions_for_user(user_id)
+        if not subs:
+            continue
         entries = _serialize_entries_for_user(user_id)
         prefs = _user_notification_prefs(user_id)
         state = dict(_user_push_state(user_id))
@@ -913,20 +918,40 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             ):
                 daily_due_users += 1
                 dbg["dailyFiring"] = True
-                ok_any, ok_n, fail_n = _push_all(
-                    "A gentle journal nudge",
-                    _build_daily_body(),
-                    "/write-entry.html",
-                    tag="diari-daily-reminder",
-                )
+                target = subs[:1]
+                ok_n = 0
+                fail_n = 0
+                last_ep = ""
+                for sub in target:
+                    last_ep = _endpoint_hint(sub.get("endpoint") or "")
+                    ok, err = send_web_push(
+                        sub,
+                        "A gentle journal nudge",
+                        _build_daily_body(),
+                        "/write-entry.html",
+                        tag="diari-daily-reminder",
+                    )
+                    if ok:
+                        sent += 1
+                        ok_n += 1
+                    else:
+                        errors += 1
+                        fail_n += 1
+                        if err:
+                            last_error = err
+                dbg["pushOk"] = ok_n
+                dbg["pushFail"] = fail_n
                 dbg["dailyPushOk"] = ok_n
                 dbg["dailyPushFail"] = fail_n
+                dbg["dailyPushTarget"] = last_ep
+                ok_any = ok_n > 0
                 if ok_any:
                     _mark_daily_reminder_sent(state, today_key, reminder)
                     state_dirty = True
+                    state["lastDailyPushTarget"] = last_ep
                 elif fail_n > 0:
                     dbg["dailyPushHint"] = (
-                        "All push endpoints failed — open the PWA and tap Use this phone only."
+                        "Push failed for this device — open the PWA and tap Use this phone only."
                     )
 
             streak = _compute_streak(entries)

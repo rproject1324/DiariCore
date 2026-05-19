@@ -2118,13 +2118,26 @@ def prune_push_subscriptions_for_user(
 
 
 def list_push_subscriptions_grouped_by_user():
-    """Return {user_id: [subscription_dict, ...]}."""
+    """Return {user_id: [subscription_dict, ...]} newest device first."""
     conn = get_conn()
     cur = conn.cursor()
     try:
-        cur.execute(
-            "SELECT user_id, subscription_json FROM push_subscriptions ORDER BY user_id, id"
-        )
+        if USE_POSTGRES:
+            cur.execute(
+                """
+                SELECT user_id, subscription_json, endpoint, updated_at
+                FROM push_subscriptions
+                ORDER BY user_id, updated_at DESC, id DESC
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT user_id, subscription_json, endpoint, updated_at
+                FROM push_subscriptions
+                ORDER BY user_id, datetime(updated_at) DESC, id DESC
+                """
+            )
         grouped: dict[int, list] = {}
         for row in cur.fetchall():
             d = row_to_dict(row)
@@ -2136,6 +2149,8 @@ def list_push_subscriptions_grouped_by_user():
             except Exception:
                 continue
             if isinstance(sub, dict) and sub.get("endpoint"):
+                sub["_endpoint"] = d.get("endpoint")
+                sub["_updatedAt"] = d.get("updated_at")
                 grouped.setdefault(uid, []).append(sub)
         return grouped
     finally:

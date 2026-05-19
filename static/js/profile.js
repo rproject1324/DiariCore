@@ -2775,6 +2775,10 @@ function formatProfilePushStatusForPhone(data) {
     lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
     lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
     lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if ((data.subscribedDevices ?? 0) > 1) {
+        lines.push('');
+        lines.push('⚠ More than one device is registered. Tap “Use this phone only” before testing.');
+    }
     if (data.subscriptionWarning) {
         lines.push('');
         lines.push('⚠ ' + data.subscriptionWarning);
@@ -2829,7 +2833,9 @@ function initializeProfilePushStatusPanel() {
         thisPhoneBtn.addEventListener('click', async function () {
             thisPhoneBtn.disabled = true;
             try {
-                if (window.DiariPwaWebPush?.subscribeWebPush) {
+                if (window.DiariPwaWebPush?.registerThisPhoneOnly) {
+                    await window.DiariPwaWebPush.registerThisPhoneOnly();
+                } else if (window.DiariPwaWebPush?.subscribeWebPush) {
                     await window.DiariPwaWebPush.subscribeWebPush();
                 }
                 if (window.DiariPwaWebPush?.sendTestPush) {
