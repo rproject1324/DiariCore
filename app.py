@@ -2546,16 +2546,9 @@ def api_push_preferences():
     if old_prefs.get("reminderTimeOverride") != new_prefs.get("reminderTimeOverride"):
         push_service.clear_daily_reminder_state(user_id)
     schedule = push_service.schedule_status_for_user(user_id)
-    dispatch_now = None
-    if schedule.get("dailyDueNow") and schedule.get("subscribedDevices", 0) > 0:
-        try:
-            dispatch_now = push_service.dispatch_due_notifications()
-        except Exception as ex:
-            dispatch_now = {"ok": False, "error": str(ex)[:200]}
-        schedule = push_service.schedule_status_for_user(user_id)
-    return jsonify(
-        {"success": True, "schedule": schedule, "dispatchNow": dispatch_now}
-    ), 200
+    # Do not dispatch from preference sync while the app is open — cron handles the
+    # scheduled window; immediate dispatch here caused extra banners every ~5 minutes.
+    return jsonify({"success": True, "schedule": schedule}), 200
 
 
 @app.route("/api/push/diagnostics", methods=["POST"])

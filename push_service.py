@@ -20,11 +20,11 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v18"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v19"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
-DAILY_PUSH_MAX_ATTEMPTS = max(2, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "4")))
+DAILY_PUSH_MAX_ATTEMPTS = max(1, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "2")))
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -557,12 +557,12 @@ def _ack_confirms_daily_reminder(
 def _daily_reminder_confirmed_on_phone(
     state: dict, today_key: str, reminder: tuple[int, int]
 ) -> bool:
-    """True only when the service worker reported the daily banner on this phone."""
-    if not _daily_reminder_fired_today(state, today_key, reminder):
-        return False
+    """True when the service worker reported today's daily banner at/after reminder time."""
+    if _ack_confirms_daily_reminder(state, today_key, reminder):
+        return True
     if _pending_daily_matches(state, today_key, reminder):
         return False
-    return _ack_confirms_daily_reminder(state, today_key, reminder)
+    return _daily_reminder_fired_today(state, today_key, reminder)
 
 
 def _reconcile_legacy_daily_without_ack(
@@ -586,7 +586,9 @@ def _reconcile_legacy_daily_without_ack(
 
 
 def _should_send_daily_now(state: dict, today_key: str, reminder: tuple[int, int]) -> tuple[bool, str | None]:
-    """Whether cron should POST another daily push (allows retries until phone acks)."""
+    """Whether cron should POST another daily push (one retry only if phone never acked)."""
+    if _ack_confirms_daily_reminder(state, today_key, reminder):
+        return False, "already_confirmed_on_phone"
     if _daily_reminder_confirmed_on_phone(state, today_key, reminder):
         return False, "already_confirmed_on_phone"
     pending = _pending_daily_matches(state, today_key, reminder)
@@ -612,17 +614,16 @@ def record_delivery_ack(user_id: int, data: dict) -> None:
     }
     if tag == "diari-daily-reminder":
         today_key = _manila_date_key(_manila_now())
+        rem = None
         pending_raw = state.get("pendingDailyReminder")
         if isinstance(pending_raw, dict):
             rem = _parse_hhmm(str(pending_raw.get("hhmm") or ""))
-            if rem and pending_raw.get("dateKey") == today_key:
-                _mark_daily_reminder_sent(state, today_key, rem)
-        else:
+        if not rem:
             prefs = _user_notification_prefs(user_id)
             entries = _serialize_entries_for_user(user_id)
             rem = _resolve_reminder_hhmm(prefs, entries)
-            if rem:
-                _mark_daily_reminder_sent(state, today_key, rem)
+        if rem:
+            _mark_daily_reminder_sent(state, today_key, rem)
     _save_push_state(user_id, state)
 
 
@@ -1160,6 +1161,12 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             state, today_key, reminder
         ):
             state_dirty = True
+        if reminder and _ack_confirms_daily_reminder(state, today_key, reminder):
+            if _pending_daily_matches(state, today_key, reminder) or not _daily_reminder_fired_today(
+                state, today_key, reminder
+            ):
+                _mark_daily_reminder_sent(state, today_key, reminder)
+                state_dirty = True
         dbg = {
             "userId": user_id,
             "reminderTimeOverride": prefs["reminderTimeOverride"],
