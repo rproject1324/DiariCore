@@ -74,10 +74,29 @@
     }
 
     function isStandalone() {
-        return (
-            window.matchMedia('(display-mode: standalone)').matches ||
-            window.navigator.standalone === true
-        );
+        try {
+            if (window.DiariOffline?.isPwaUiContext?.()) return true;
+        } catch (_) {
+            /* ignore */
+        }
+        const el = document.documentElement;
+        if (el?.classList.contains('diari-pwa-standalone')) return true;
+        if (el?.getAttribute('data-diari-pwa') === 'standalone') return true;
+        const modes = ['standalone', 'fullscreen', 'minimal-ui'];
+        for (let i = 0; i < modes.length; i += 1) {
+            try {
+                if (window.matchMedia('(display-mode: ' + modes[i] + ')').matches) return true;
+            } catch (_) {
+                /* ignore */
+            }
+        }
+        if (window.navigator.standalone === true) return true;
+        try {
+            if (document.referrer && document.referrer.indexOf('android-app://') === 0) return true;
+        } catch (_) {
+            /* ignore */
+        }
+        return false;
     }
 
     let deferredInstallPrompt = null;

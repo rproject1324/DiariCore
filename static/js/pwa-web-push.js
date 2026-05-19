@@ -9,15 +9,50 @@
     function isPwaStandalone() {
         try {
             if (global.DiariPWA && typeof global.DiariPWA.isStandalone === 'function') {
-                return global.DiariPWA.isStandalone();
+                if (global.DiariPWA.isStandalone()) return true;
             }
         } catch (_) {
             /* ignore */
         }
-        return (
-            (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
-            global.navigator.standalone === true
-        );
+        try {
+            if (global.DiariOffline?.isPwaUiContext?.()) return true;
+        } catch (_) {
+            /* ignore */
+        }
+        const el = global.document?.documentElement;
+        if (el?.classList.contains('diari-pwa-standalone')) return true;
+        if (el?.getAttribute('data-diari-pwa') === 'standalone') return true;
+        const modes = ['standalone', 'fullscreen', 'minimal-ui'];
+        for (let i = 0; i < modes.length; i += 1) {
+            try {
+                if (global.matchMedia && global.matchMedia('(display-mode: ' + modes[i] + ')').matches) {
+                    return true;
+                }
+            } catch (_) {
+                /* ignore */
+            }
+        }
+        if (global.navigator?.standalone === true) return true;
+        try {
+            if (global.document?.referrer && global.document.referrer.indexOf('android-app://') === 0) {
+                return true;
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return false;
+    }
+
+    async function ensureServiceWorkerReady() {
+        if (!('serviceWorker' in navigator)) {
+            throw new Error('Service worker not supported on this browser');
+        }
+        let reg = await navigator.serviceWorker.getRegistration('/');
+        if (!reg) {
+            reg = await navigator.serviceWorker.register('/service-worker.js', { scope: '/' });
+        }
+        await navigator.serviceWorker.ready;
+        return reg;
     }
 
     function urlBase64ToUint8Array(base64String) {
@@ -109,6 +144,78 @@
     /**
      * Browser push subscription matching current VAPID key (re-subscribe only if mismatched).
      */
+    async function runPushDiagnostics() {
+        const diag = {
+            at: new Date().toISOString(),
+            pwaStandalone: isPwaStandalone(),
+            notificationPermission:
+                typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+            serviceWorker: 'serviceWorker' in navigator,
+            pushManager: 'PushManager' in global,
+            displayMode: null,
+            hasBrowserSubscription: false,
+            serverDevices: null,
+            steps: [],
+        };
+        try {
+            diag.displayMode = global.matchMedia('(display-mode: standalone)').matches
+                ? 'standalone'
+                : global.matchMedia('(display-mode: minimal-ui)').matches
+                  ? 'minimal-ui'
+                  : global.matchMedia('(display-mode: fullscreen)').matches
+                    ? 'fullscreen'
+                    : 'browser/other';
+        } catch (_) {
+            diag.displayMode = 'unknown';
+        }
+        if (!diag.pwaStandalone) {
+            diag.steps.push('FAIL: not detected as installed PWA');
+            return diag;
+        }
+        if (diag.notificationPermission !== 'granted') {
+            diag.steps.push('FAIL: notifications not allowed — enable in Android Settings → Apps → Chrome → Notifications');
+            return diag;
+        }
+        try {
+            const publicKey = await fetchVapidPublicKey();
+            diag.vapidOk = true;
+            const reg = await ensureServiceWorkerReady();
+            diag.serviceWorkerState = reg.active ? 'active' : reg.installing ? 'installing' : 'waiting';
+            const sub = await reg.pushManager.getSubscription();
+            diag.hasBrowserSubscription = !!sub;
+            diag.subscriptionEndpoint = sub
+                ? String(sub.endpoint || '').slice(0, 48) + '…'
+                : null;
+            if (!sub) {
+                diag.steps.push('WARN: no browser push subscription yet');
+            } else {
+                diag.steps.push('OK: browser has push subscription');
+            }
+            const saved = await saveSubscriptionOnServer(sub || (await getOrCreatePushSubscription(reg, publicKey)));
+            diag.serverDevices =
+                saved.subscribedDevices ?? saved.schedule?.subscribedDevices ?? null;
+            if ((diag.serverDevices ?? 0) >= 1) {
+                diag.steps.push('OK: server saved this device (' + diag.serverDevices + ')');
+            } else {
+                diag.steps.push('FAIL: server still shows 0 devices after subscribe');
+            }
+        } catch (e) {
+            diag.error = e && e.message ? e.message : String(e);
+            diag.steps.push('FAIL: ' + diag.error);
+        }
+        try {
+            await apiFetch('/api/push/diagnostics', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ report: diag }),
+            });
+        } catch (_) {
+            /* ignore */
+        }
+        return diag;
+    }
+
     async function getOrCreatePushSubscription(reg, publicKeyB64) {
         let sub = await reg.pushManager.getSubscription();
         if (sub && !subscriptionUsesVapidKey(sub, publicKeyB64)) {
@@ -140,7 +247,7 @@
             return { ok: false, error: 'Notifications not allowed' };
         }
         const publicKey = await fetchVapidPublicKey();
-        const reg = await navigator.serviceWorker.ready;
+        const reg = await ensureServiceWorkerReady();
         const sub = await getOrCreatePushSubscription(reg, publicKey);
         const data = await saveSubscriptionOnServer(sub);
         const devices =
@@ -176,8 +283,11 @@
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
             return { ok: false, error: 'Notifications not allowed' };
         }
+        if (!('serviceWorker' in navigator) || !('PushManager' in global)) {
+            return { ok: false, error: 'Push not supported on this browser' };
+        }
         const publicKey = await fetchVapidPublicKey();
-        const reg = await navigator.serviceWorker.ready;
+        const reg = await ensureServiceWorkerReady();
         const existing = await reg.pushManager.getSubscription();
         if (existing) {
             try {
@@ -274,14 +384,38 @@
     }
 
     async function registerThisPhoneOnly() {
-        if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
-        try {
-            const data = await renewPushSubscription();
+        if (!isPwaStandalone()) {
             return {
-                ok: !!data.ok,
+                ok: false,
+                error:
+                    'Open DiariCore from your home-screen icon (installed app), not a Chrome tab.',
+            };
+        }
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return {
+                ok: false,
+                error:
+                    'Notifications blocked. Android Settings → Apps → Chrome → Notifications → Allow.',
+            };
+        }
+        try {
+            let data = await syncPushSubscriptionToServer();
+            if (!data.ok) {
+                data = await renewPushSubscription();
+            }
+            if (!data.ok) {
+                return {
+                    ok: false,
+                    error: data.error || 'Could not register this phone',
+                    schedule: data.schedule,
+                    subscribedDevices: data.subscribedDevices,
+                };
+            }
+            return {
+                ok: true,
                 schedule: data.schedule,
                 subscribedDevices: data.subscribedDevices,
-                error: data.ok ? null : 'Could not register this phone',
+                error: null,
             };
         } catch (e) {
             return { ok: false, error: e && e.message ? e.message : 'Could not register this phone' };
@@ -300,7 +434,7 @@
             return { ok: false, error: e && e.message ? e.message : 'Could not register this phone' };
         }
         if (!reg.ok) {
-            return { ok: false, error: reg.error || 'Could not register this phone' };
+            return { ok: false, error: reg.error || 'Could not register this phone', diagnostics: reg.diagnostics };
         }
         let devices = reg.subscribedDevices;
         if (devices == null && reg.schedule) {
@@ -326,10 +460,11 @@
                     ' device). Tap “Test daily nudge now”, then fully close the app.',
             };
         }
+        const diag = await runPushDiagnostics();
         return {
             ok: false,
-            error:
-                'Server still shows 0 devices. Check internet, stay on this screen 10s, tap Refresh status.',
+            error: diag.error || 'Server still shows 0 devices after register.',
+            diagnostics: diag,
         };
     }
 
@@ -368,5 +503,7 @@
         buildNotificationPrefsPayload,
         getEffectiveReminderHHmm,
         waitForReady,
+        runPushDiagnostics,
+        ensureServiceWorkerReady,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

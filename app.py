@@ -2558,6 +2558,36 @@ def api_push_preferences():
     ), 200
 
 
+@app.route("/api/push/diagnostics", methods=["POST"])
+def api_push_client_diagnostics():
+    """PWA: store last client-side push registration report (for support debugging)."""
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
+    if auth_err:
+        return auth_err
+    data = request.get_json(silent=True) or {}
+    report = data.get("report") if isinstance(data.get("report"), dict) else data
+    if not isinstance(report, dict):
+        return jsonify({"success": False, "error": "Invalid report."}), 400
+    db.merge_user_ui_preferences_json(
+        user_id,
+        {
+            "pushDebug": {
+                "lastClientReport": report,
+                "lastClientReportAt": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+    devices = len(db.list_push_subscriptions_for_user(user_id))
+    err = str(report.get("error") or "").strip()
+    print(
+        f"[diari-push-diag] user={user_id} devices={devices} "
+        f"pwa={report.get('pwaStandalone')} perm={report.get('notificationPermission')} "
+        f"err={err[:120] if err else 'none'}",
+        flush=True,
+    )
+    return jsonify({"success": True, "subscribedDevices": devices}), 200
+
+
 @app.route("/api/push/schedule-status", methods=["GET"])
 def api_push_schedule_status():
     """PWA: show what time the server will use for daily reminders."""

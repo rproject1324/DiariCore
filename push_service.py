@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v16"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v17"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -571,6 +571,10 @@ def schedule_status_for_user(user_id: int) -> dict:
         and _reminder_due_in_window(h, m, reminder)
         and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
     )
+    prefs_blob = db._load_ui_preferences_blob(user_id)
+    push_debug = prefs_blob.get("pushDebug") if isinstance(prefs_blob.get("pushDebug"), dict) else {}
+    last_client = push_debug.get("lastClientReport")
+    last_client_at = push_debug.get("lastClientReportAt")
     subs = db.list_push_subscriptions_for_user(user_id)
     devices = len(subs)
     device_hints = [
@@ -617,6 +621,8 @@ def schedule_status_for_user(user_id: int) -> dict:
         ),
         "subscribedDevices": devices,
         "registrationOk": devices >= 1,
+        "lastClientDiagnostics": last_client if isinstance(last_client, dict) else None,
+        "lastClientDiagnosticsAt": last_client_at,
         "criticalWarning": (
             "No device registered on the server — reminders cannot be delivered while the app is closed. "
             "Keep the app open for a few seconds and tap “Use this phone only” until this shows 1 device."

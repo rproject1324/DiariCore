@@ -2808,6 +2808,20 @@ function formatProfilePushStatusForPhone(data) {
         lines.push('Scheduler on server: ' + (data.scheduledDispatchActive ? 'running' : 'not started yet'));
         lines.push('Last server check: ' + (data.lastServerDispatchAt || '(none yet — wait 1–2 min)'));
     }
+    if (data.lastClientDiagnostics && typeof data.lastClientDiagnostics === 'object') {
+        const c = data.lastClientDiagnostics;
+        lines.push('');
+        lines.push('Last register attempt on this phone:');
+        lines.push('  PWA detected: ' + (c.pwaStandalone ? 'yes' : 'no'));
+        lines.push('  Notifications: ' + (c.notificationPermission || '?'));
+        lines.push('  Display mode: ' + (c.displayMode || '?'));
+        if (c.error) lines.push('  Error: ' + c.error);
+        if (Array.isArray(c.steps) && c.steps.length) {
+            c.steps.forEach(function (step) {
+                lines.push('  ' + step);
+            });
+        }
+    }
     lines.push('');
     lines.push(
         'With app OPEN, an old local backup could show reminders. True closed-app push needs the app fully closed.'
@@ -2873,8 +2887,16 @@ async function refreshProfilePushStatusPanel() {
     panel.hidden = false;
     pre.textContent = 'Loading…';
     try {
+        const push = await ensureDiariPwaWebPushReady(3000);
+        const runDiag = pre.dataset.forceDiag === '1';
+        delete pre.dataset.forceDiag;
         const res = await fetch('/api/push/schedule-status', { credentials: 'same-origin' });
-        const data = await res.json().catch(() => ({}));
+        let data = await res.json().catch(() => ({}));
+        if (runDiag || (data.subscribedDevices ?? 0) < 1) {
+            if (push?.runPushDiagnostics) await push.runPushDiagnostics();
+            const res2 = await fetch('/api/push/schedule-status', { credentials: 'same-origin' });
+            data = await res2.json().catch(() => data);
+        }
         pre.textContent = formatProfilePushStatusForPhone(data);
     } catch (e) {
         pre.textContent = 'Network error: ' + (e && e.message ? e.message : 'try again');
@@ -2964,11 +2986,12 @@ function initializeProfilePushStatusPanel() {
                         7000
                     );
                 } else {
-                    showNotification(
-                        result.error || 'Could not register push on this phone.',
-                        'warning',
-                        6000
-                    );
+                    const errMsg = result.error || 'Could not register push on this phone.';
+                    showNotification(errMsg, 'warning', 9000);
+                    const pre = document.getElementById('profilePushStatusText');
+                    if (pre && result.diagnostics) {
+                        pre.dataset.forceDiag = '1';
+                    }
                 }
                 await fetch('/api/push/reset-daily-reminder', {
                     method: 'POST',
@@ -3072,9 +3095,9 @@ function initializePreferenceToggles() {
             void (async function () {
                 const isChecked = toggle.checked;
                 const titleEl = row.querySelector(
-                    '.appearance-subtitle, .notifications-subtitle, .preference-title'
-                );
-                const preferenceTitle = titleEl ? titleEl.textContent.trim() : 'Preference';
+                '.appearance-subtitle, .notifications-subtitle, .preference-title'
+            );
+            const preferenceTitle = titleEl ? titleEl.textContent.trim() : 'Preference';
 
                 if (toggle.id === 'toggleDarkMode' && window.DiariTheme && typeof window.DiariTheme.setTheme === 'function') {
                     const nextTheme = isChecked ? 'dark' : 'light';
@@ -3090,7 +3113,7 @@ function initializePreferenceToggles() {
                         return;
                     }
                     window.DiariTheme.setTheme(nextTheme);
-                    showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
+            showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
                     return;
                 }
 
@@ -3115,7 +3138,7 @@ function initializePreferenceToggles() {
 
                 if (!(await isPwaOfflineForUserActions())) {
                     showNotification(`${preferenceTitle} ${isChecked ? 'enabled' : 'disabled'}`, 'success');
-                    savePreference(preferenceTitle, isChecked);
+            savePreference(preferenceTitle, isChecked);
                 }
             })();
         });

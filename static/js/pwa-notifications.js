@@ -18,18 +18,30 @@
     function isPwaStandalone() {
         try {
             if (global.DiariPWA && typeof global.DiariPWA.isStandalone === 'function') {
-                return global.DiariPWA.isStandalone();
+                if (global.DiariPWA.isStandalone()) return true;
             }
         } catch (_) {
             /* ignore */
         }
+        try {
+            if (global.DiariOffline?.isPwaUiContext?.()) return true;
+        } catch (_) {
+            /* ignore */
+        }
         const el = global.document?.documentElement;
-        return (
-            (el && el.classList.contains('diari-pwa-standalone')) ||
-            el?.getAttribute('data-diari-pwa') === 'standalone' ||
-            (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
-            global.navigator?.standalone === true
-        );
+        if (el?.classList.contains('diari-pwa-standalone')) return true;
+        if (el?.getAttribute('data-diari-pwa') === 'standalone') return true;
+        const modes = ['standalone', 'fullscreen', 'minimal-ui'];
+        for (let i = 0; i < modes.length; i += 1) {
+            try {
+                if (global.matchMedia && global.matchMedia('(display-mode: ' + modes[i] + ')').matches) {
+                    return true;
+                }
+            } catch (_) {
+                /* ignore */
+            }
+        }
+        return global.navigator?.standalone === true;
     }
 
     function readEntries() {
