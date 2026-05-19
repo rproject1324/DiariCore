@@ -448,6 +448,11 @@ class SidebarComponent {
     }
 
     initSyncStatusBadge() {
+        if (window.DiariOffline?.isPwaUiContext?.()) {
+            const existing = document.querySelector('.sync-status-badge');
+            if (existing) existing.remove();
+            return;
+        }
         if (document.querySelector('.sync-status-badge')) {
             this.syncBadgeEl = document.querySelector('.sync-status-badge');
             this.refreshSyncStatusBadge();
@@ -506,6 +511,7 @@ class SidebarComponent {
     }
 
     async refreshSyncStatusBadge() {
+        if (window.DiariOffline?.isPwaUiContext?.()) return;
         if (!this.syncBadgeEl) return;
         const isOnline = navigator.onLine !== false;
         const pendingTags = this.readTagPendingCount();

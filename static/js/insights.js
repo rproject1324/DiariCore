@@ -57,7 +57,35 @@ function insightsChartActiveTipIndex(chart) {
     return active?.[0]?.index ?? -1;
 }
 
-/** Mobile/PWA: Chart.js legend lives on the canvas; capture-phase tap handler must not swallow legend clicks. */
+/** Re-stack Emotion-by-Tag bars so visible moods fill 100% (matches desktop legend toggle feel). */
+function moodByTagRecalcVisiblePercentages(chart) {
+    const breakdown = chart?._diariTagBreakdown;
+    if (!breakdown?.rankedTagKeys?.length) return;
+    const moodKeys = ['happy', 'sad', 'angry', 'anxious', 'neutral'];
+    chart.data.datasets.forEach((ds, di) => {
+        const mood = moodKeys[di];
+        if (!mood) return;
+        ds.data = breakdown.rankedTagKeys.map((tagKey) => {
+            if (!chart.isDatasetVisible(di)) return 0;
+            const visibleTotal = moodKeys.reduce((sum, mk, idx) => {
+                if (!chart.isDatasetVisible(idx)) return sum;
+                return sum + (breakdown.countsByTag[tagKey]?.[mk] || 0);
+            }, 0);
+            const count = breakdown.countsByTag[tagKey]?.[mood] || 0;
+            if (visibleTotal <= 0) return 0;
+            return Math.round((count / visibleTotal) * 1000) / 10;
+        });
+    });
+}
+
+function moodByTagLegendToggle(chart, datasetIndex) {
+    if (!chart || datasetIndex == null) return;
+    chart.setDatasetVisibility(datasetIndex, !chart.isDatasetVisible(datasetIndex));
+    moodByTagRecalcVisiblePercentages(chart);
+    chart.update();
+}
+
+/** Mobile/PWA: legend is drawn on the canvas — detect taps/clicks on legend hit boxes. */
 function insightsTryHandleChartLegendClick(chart, e) {
     const legend = chart?.legend;
     if (!legend?.legendHitBoxes?.length || !legend.legendItems?.length) return false;
@@ -76,23 +104,66 @@ function insightsTryHandleChartLegendClick(chart, e) {
         y = (e.clientY - rect.top) * scaleY;
     }
 
+    const pad = 6;
     const hitIndex = legend.legendHitBoxes.findIndex((box) =>
-        x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height
+        x >= box.left - pad &&
+        x <= box.left + box.width + pad &&
+        y >= box.top - pad &&
+        y <= box.top + box.height + pad
     );
     if (hitIndex < 0) return false;
 
     const item = legend.legendItems[hitIndex];
+    if (chart._diariTagBreakdown && item.datasetIndex != null) {
+        moodByTagLegendToggle(chart, item.datasetIndex);
+        return true;
+    }
+
     const onClick = legend.options?.onClick;
     if (typeof onClick === 'function') {
         onClick(e, item, legend);
-    } else {
-        const idx = item.datasetIndex;
-        if (idx != null) {
-            chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
-            chart.update();
-        }
+    } else if (item.datasetIndex != null) {
+        chart.setDatasetVisibility(item.datasetIndex, !chart.isDatasetVisible(item.datasetIndex));
+        chart.update();
     }
     return true;
+}
+
+/** Emotion-by-Tag: legend toggle + mobile bar tooltips (no capture wrapper — it blocked legend). */
+function bindMoodByTagChartInteractions(chart) {
+    if (!chart?.canvas) return;
+    const canvas = chart.canvas;
+    if (canvas.dataset.diariMoodByTagBound === '1') return;
+    canvas.dataset.diariMoodByTagBound = '1';
+
+    const handlePointer = (e) => {
+        if (insightsTryHandleChartLegendClick(chart, e)) return;
+        if (!insightsIsMobileChartUi()) return;
+        let elements = [];
+        try {
+            elements = chart.getElementsAtEventForMode(e, 'index', { intersect: false }, true) || [];
+        } catch (_) {
+            elements = [];
+        }
+        insightsBarChartOnClick(chart, elements);
+    };
+
+    canvas.addEventListener('click', handlePointer);
+    canvas.addEventListener(
+        'touchend',
+        (e) => {
+            const touch = e.changedTouches?.[0];
+            if (!touch) return;
+            handlePointer({
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+                target: canvas,
+                preventDefault: () => {},
+                stopPropagation: () => {},
+            });
+        },
+        { passive: true }
+    );
 }
 
 /** Mobile: tap same bar again to dismiss; tap chart container padding to dismiss. */
@@ -1741,6 +1812,11 @@ function initializeMoodByTagChart() {
                 legend: {
                     display: true,
                     position: 'top',
+                    onClick(e, legendItem, legend) {
+                        const idx = legendItem.datasetIndex;
+                        if (idx == null) return;
+                        moodByTagLegendToggle(legend.chart, idx);
+                    },
                     labels: {
                         color: chartTheme.tick,
                         font: { size: 11, weight: '600' },
@@ -1850,8 +1926,11 @@ function initializeMoodByTagChart() {
         MOOD_BY_TAG_CHART = null;
     }
     MOOD_BY_TAG_CHART = new Chart(ctx, config);
+    if (breakdown) MOOD_BY_TAG_CHART._diariTagBreakdown = breakdown;
     bindInsightsChartFlow(MOOD_BY_TAG_CHART);
-    bindInsightsMobileChartTapToggle(MOOD_BY_TAG_CHART);
+    if (insightsIsMobileChartUi()) {
+        bindMoodByTagChartInteractions(MOOD_BY_TAG_CHART);
+    }
 }
 
 // Load Insights Data

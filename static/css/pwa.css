@@ -148,16 +148,17 @@ html.theme-dark .pwa-install-banner__inner {
 /* PWA Profile — reminder time picker arrow inset from right edge */
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-    padding-right: 3.35rem;
+    padding-right: 3.85rem;
     text-align: center;
 }
 
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-    margin-right: 1.35rem;
+    margin-right: 1.65rem;
     margin-left: 0;
     cursor: pointer;
     opacity: 0.92;
+    transform: translateX(-6px);
 }
 
 /* PWA Profile — daily push needs internet; grey out when offline */
@@ -202,19 +203,34 @@ html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notific
     opacity: 0.5;
 }
 
-/* PWA Profile — personal info fields greyed out when offline */
-html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__input,
-html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__input,
-html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__select,
-html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__select {
-    opacity: 0.5;
-    pointer-events: none;
-    cursor: not-allowed;
+/* PWA Profile — personal info: grey out all fields + actions when offline */
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change {
+    opacity: 0.45 !important;
+    pointer-events: none !important;
+    cursor: not-allowed !important;
+    filter: grayscale(0.2);
 }
 
-html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field,
-html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field {
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer {
     pointer-events: none;
+}
+
+/* PWA — hide floating offline sync badge (redundant UI) */
+html.diari-pwa-standalone .sync-status-badge,
+html[data-diari-pwa='standalone'] .sync-status-badge {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 
 /* PWA Profile — toasts use theme tokens (success reminder message) */

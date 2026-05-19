@@ -132,18 +132,24 @@ const PROFILE_PERSONAL_OFFLINE_FIELD_IDS = [
 
 function applyPwaProfilePersonalOfflineState() {
     if (!isPwaProfileContext()) return;
-    const form = document.querySelector(
-        '#profileSectionPersonalInfo .profile-account-detail-form'
-    );
+    const panel = document.getElementById('profileSectionPersonalInfo');
     const offline = isPwaOfflineForUserActionsSync();
-    if (form) {
-        form.classList.toggle('pwa-profile-personal-offline', offline);
+    if (panel) {
+        panel.classList.toggle('pwa-profile-personal-offline', offline);
     }
     PROFILE_PERSONAL_OFFLINE_FIELD_IDS.forEach(function (id) {
         const el = document.getElementById(id);
         if (!el) return;
         el.disabled = offline;
         el.setAttribute('aria-disabled', offline ? 'true' : 'false');
+    });
+    const cancelBtn = document.getElementById('profilePersonalCancelBtn');
+    const saveBtn = document.getElementById('profilePersonalSaveBtn');
+    const photoBtn = document.getElementById('profilePersonalChangePhotoBtn');
+    [cancelBtn, saveBtn, photoBtn].forEach(function (btn) {
+        if (!btn) return;
+        btn.disabled = offline;
+        btn.setAttribute('aria-disabled', offline ? 'true' : 'false');
     });
     refreshProfilePersonalSaveButton();
 }
@@ -157,19 +163,6 @@ function profilePersonalNicknameEmailChangedFromStored(user, nick, email) {
     if (nick.trim() !== origNick) return true;
     if (email.trim().toLowerCase() !== origEmail) return true;
     return false;
-}
-
-function isProfilePersonalFormValidForPwaOffline() {
-    if (!validateProfilePersonalField('profileFieldFirstName')) return false;
-    if (!validateProfilePersonalField('profileFieldLastName')) return false;
-    if (!validateProfilePersonalField('profileFieldBirthday')) return false;
-    const nickEl = document.getElementById('profileFieldNickname');
-    const emEl = document.getElementById('profileFieldEmail');
-    const nv = ((nickEl && nickEl.value) || '').trim();
-    const ev = ((emEl && emEl.value) || '').trim();
-    if (!nv || nv.length < 4 || nv.length > 64) return false;
-    if (!ev || !profilePersonalIsValidEmail(ev)) return false;
-    return true;
 }
 
 function showPwaInternetRequiredToast() {
@@ -203,14 +196,6 @@ window.handlePwaProfilePalettePick = async function (paletteId) {
     }
     window.DiariTheme.setPalette(paletteId);
 };
-
-function finishProfilePersonalSaveSuccessOffline(patch) {
-    const prev = getStoredDiariUser() || {};
-    mergeDiariUserIntoStorage(Object.assign({}, prev, patch));
-    initializeProfileFromStorage();
-    hydratePersonalInfoPanel();
-    showPwaSavedOfflineToast();
-}
 
 function initializeProfileFromStorage() {
     try {
@@ -697,9 +682,11 @@ function isProfilePersonalFormValid() {
 function refreshProfilePersonalSaveButton() {
     var btn = document.getElementById('profilePersonalSaveBtn');
     if (!btn) return;
-    btn.disabled = isPwaOfflineForUserActionsSync()
-        ? !isProfilePersonalFormValidForPwaOffline()
-        : !isProfilePersonalFormValid();
+    if (isPwaProfileContext() && isPwaOfflineForUserActionsSync()) {
+        btn.disabled = true;
+        return;
+    }
+    btn.disabled = !isProfilePersonalFormValid();
 }
 
 function wireProfilePersonalLiveValidation() {
@@ -1774,27 +1761,8 @@ function savePersonalInfoForm() {
     void (async function () {
         const offline = await isPwaOfflineForUserActions();
         if (offline && isPwaProfileContext()) {
-            if (!isProfilePersonalFormValidForPwaOffline()) {
-                showNotification('Please fix the highlighted fields before saving.', 'warning');
-                return;
-            }
-            if (profilePersonalNicknameEmailChangedFromStored(user, nick, email)) {
-                showPwaInternetRequiredToast();
-                return;
-            }
-            if (saveBtn) saveBtn.disabled = true;
-            const patch = {
-                firstName: first,
-                lastName: last,
-                gender: gender || null,
-                birthday: bday || null,
-            };
-            if (window.DiariOffline?.savePwaProfilePending) {
-                window.DiariOffline.savePwaProfilePending(patch);
-            }
-            if (saveBtn) saveBtn.disabled = false;
-            refreshProfilePersonalSaveButton();
-            finishProfilePersonalSaveSuccessOffline(patch);
+            showPwaInternetRequiredToast();
+            applyPwaProfilePersonalOfflineState();
             return;
         }
 
