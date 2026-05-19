@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v14"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v15"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -612,6 +612,13 @@ def schedule_status_for_user(user_id: int) -> dict:
             "POST /api/push/reset-daily-reminder clears this flag for testing."
         ),
         "subscribedDevices": devices,
+        "registrationOk": devices >= 1,
+        "criticalWarning": (
+            "No device registered on the server — reminders cannot be delivered while the app is closed. "
+            "Keep the app open for a few seconds and tap “Use this phone only” until this shows 1 device."
+            if devices < 1
+            else None
+        ),
         "lastPushReceivedOnPhone": last_ack_out,
         "subscriptionDeviceHints": device_hints,
         "subscriptionWarning": (
@@ -923,6 +930,7 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
 
     purged = purge_stale_push_subscriptions()
     grouped = db.list_push_subscriptions_grouped_by_user()
+    subscribed_ids = set(grouped.keys())
     now = _manila_now()
     today_key = _manila_date_key(now)
     h, m = _manila_hm(now)
@@ -1088,6 +1096,29 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         if debug:
             user_debug.append(dbg)
 
+    daily_due_no_device = 0
+    for user_id in db.list_user_ids_with_daily_reminders_enabled():
+        if user_id in subscribed_ids:
+            continue
+        prefs = _user_notification_prefs(user_id)
+        if not prefs.get("dailyEnabled", True):
+            continue
+        entries = _serialize_entries_for_user(user_id)
+        if _has_entry_today_manila(entries):
+            continue
+        reminder = _resolve_reminder_hhmm(prefs, entries)
+        if not reminder or not _reminder_due_in_window(h, m, reminder):
+            continue
+        state = _user_push_state(user_id)
+        if _daily_reminder_fired_today(state, today_key, reminder):
+            continue
+        daily_due_no_device += 1
+        print(
+            f"[diari-push-cron] manila={h:02d}:{m:02d} user={user_id} "
+            "dailyDue=1 NO_DEVICE_REGISTERED (open PWA → Use this phone only)",
+            flush=True,
+        )
+
     out = {
         "ok": True,
         "sent": sent,
@@ -1099,12 +1130,18 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         "pushBackendVersion": PUSH_BACKEND_VERSION,
         "staleSubscriptionsPurged": purged,
         "dailyDueUsers": daily_due_users,
+        "dailyDueNoDevice": daily_due_no_device,
         "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
     }
     if debug:
         out["userDebug"] = user_debug
     if last_error:
         out["lastError"] = last_error
-    if daily_due_users > 0 and sent == 0:
+    if daily_due_no_device > 0:
+        out["hint"] = (
+            f"{daily_due_no_device} user(s) due for reminder but zero devices registered — "
+            "open the PWA once to register push."
+        )
+    elif daily_due_users > 0 and sent == 0:
         out["hint"] = "Daily reminder was due but send failed — check lastError."
     return out

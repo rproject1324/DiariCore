@@ -392,18 +392,12 @@
                 await requestPermissionIfNeeded();
             } else if (
                 Notification?.permission === 'granted' &&
-                global.DiariPwaWebPush?.subscribeWebPush
+                global.DiariPwaWebPush?.syncPushSubscriptionToServer
             ) {
                 try {
-                    await global.DiariPwaWebPush.subscribeWebPush();
-                    const needsTest =
-                        global.DiariPwaWebPush?.isWebPushActive &&
-                        !global.DiariPwaWebPush.isWebPushActive();
-                    if (needsTest && global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
-                        await global.DiariPwaWebPush.confirmWebPushWithServerTest();
-                    }
-                } catch (_) {
-                    /* local scheduler remains backup */
+                    await global.DiariPwaWebPush.syncPushSubscriptionToServer();
+                } catch (e) {
+                    console.warn('[DiariPwaNotifications] sync push to server failed:', e);
                 }
             }
             if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {

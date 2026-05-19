@@ -2775,6 +2775,10 @@ function formatProfilePushStatusForPhone(data) {
     lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
     lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
     lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if (data.criticalWarning) {
+        lines.push('');
+        lines.push('⚠ ' + data.criticalWarning);
+    }
     if (data.lastPushReceivedOnPhone && data.lastPushReceivedOnPhone.at) {
         lines.push(
             'Last push received ON THIS PHONE: ' +
@@ -3277,6 +3281,13 @@ function openProfileSection(sectionKey) {
             window.DiariPwaNotifications.hydrateProfileNotificationUi();
         }
         initializeProfilePushStatusPanel();
+        if (
+            window.DiariPwaWebPush?.syncPushSubscriptionToServer &&
+            typeof Notification !== 'undefined' &&
+            Notification.permission === 'granted'
+        ) {
+            void window.DiariPwaWebPush.syncPushSubscriptionToServer();
+        }
         void syncPushNotificationPrefsToServerFromProfile();
         void refreshProfilePushStatusPanel();
     }

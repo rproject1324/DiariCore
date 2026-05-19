@@ -54,8 +54,15 @@
         };
     }
 
+    function apiFetch(input, init) {
+        if (global.DiariSecurity?.apiFetch) {
+            return global.DiariSecurity.apiFetch(input, init);
+        }
+        return fetch(input, init);
+    }
+
     async function fetchVapidPublicKey() {
-        const res = await fetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
+        const res = await apiFetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.publicKey) {
             throw new Error(data.error || 'Web Push not available');
@@ -63,13 +70,76 @@
         return data.publicKey;
     }
 
+    async function saveSubscriptionOnServer(sub) {
+        const body = {
+            subscription: sub.toJSON(),
+            keepThisDeviceOnly: true,
+            ...buildNotificationPrefsPayload(),
+        };
+        const res = await apiFetch('/api/push/subscribe', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || 'Subscribe failed');
+        }
+        return data;
+    }
+
+    /**
+     * Save the browser's current push subscription to Railway without unsubscribing first.
+     * Unsubscribing on every open was invalidating FCM tokens (closed-app push then fails).
+     */
+    async function syncPushSubscriptionToServer() {
+        if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
+        if (!('serviceWorker' in navigator) || !('PushManager' in global)) {
+            return { ok: false, error: 'Push not supported' };
+        }
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return { ok: false, error: 'Notifications not allowed' };
+        }
+        const publicKey = await fetchVapidPublicKey();
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+            sub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(publicKey),
+            });
+        }
+        const data = await saveSubscriptionOnServer(sub);
+        try {
+            global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+        } catch (_) {
+            /* ignore */
+        }
+        if (global.DiariPwaNotifications?.syncPrefsToWorker) {
+            void global.DiariPwaNotifications.syncPrefsToWorker();
+        }
+        global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
+        return { ok: true, schedule: data.schedule, subscribedDevices: data.schedule?.subscribedDevices };
+    }
+
     async function subscribeWebPush() {
         if (!isPwaStandalone()) return false;
-        if (!('serviceWorker' in navigator) || !('PushManager' in global)) return false;
-        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+        try {
+            const result = await syncPushSubscriptionToServer();
+            return !!result.ok;
+        } catch (e) {
+            console.warn('[DiariPwaWebPush] syncPushSubscriptionToServer failed:', e);
             return false;
         }
+    }
 
+    /** Force new FCM token (only when user taps "Use this phone only"). */
+    async function renewPushSubscription() {
+        if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return { ok: false, error: 'Notifications not allowed' };
+        }
         const publicKey = await fetchVapidPublicKey();
         const reg = await navigator.serviceWorker.ready;
         const existing = await reg.pushManager.getSubscription();
@@ -84,23 +154,7 @@
             userVisibleOnly: true,
             applicationServerKey: urlBase64ToUint8Array(publicKey),
         });
-
-        const body = {
-            subscription: sub.toJSON(),
-            keepThisDeviceOnly: true,
-            ...buildNotificationPrefsPayload(),
-        };
-        const res = await fetch('/api/push/subscribe', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-            throw new Error(data.error || 'Subscribe failed');
-        }
-
+        const data = await saveSubscriptionOnServer(sub);
         try {
             global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
         } catch (_) {
@@ -109,8 +163,7 @@
         if (global.DiariPwaNotifications?.syncPrefsToWorker) {
             void global.DiariPwaNotifications.syncPrefsToWorker();
         }
-        global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
-        return true;
+        return { ok: true, ...data };
     }
 
     async function confirmWebPushWithServerTest() {
@@ -120,7 +173,7 @@
 
     async function sendTestPush() {
         if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
-        const res = await fetch('/api/push/test', {
+        const res = await apiFetch('/api/push/test', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
@@ -152,7 +205,7 @@
         }
         const body = buildNotificationPrefsPayload();
         try {
-            const res = await fetch('/api/push/preferences', {
+            const res = await apiFetch('/api/push/preferences', {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
@@ -182,24 +235,16 @@
 
     async function registerThisPhoneOnly() {
         if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
-        const subscribed = await subscribeWebPush();
-        if (!subscribed) return { ok: false, error: 'Could not subscribe this phone' };
-        let endpoint = '';
         try {
-            const reg = await navigator.serviceWorker.ready;
-            const sub = await reg.pushManager.getSubscription();
-            endpoint = sub && sub.endpoint ? sub.endpoint : '';
-        } catch (_) {
-            /* ignore */
+            const data = await renewPushSubscription();
+            return {
+                ok: !!data.ok,
+                schedule: data.schedule,
+                error: data.ok ? null : 'Could not register this phone',
+            };
+        } catch (e) {
+            return { ok: false, error: e && e.message ? e.message : 'Could not register this phone' };
         }
-        const res = await fetch('/api/push/prune-devices', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ endpoint }),
-        });
-        const data = await res.json().catch(() => ({}));
-        return { ok: res.ok && data.success, ...data };
     }
 
     /**
@@ -214,7 +259,7 @@
         let test = await sendTestPush();
         if (!test || !test.ok) {
             try {
-                const res = await fetch('/api/push/send-daily-test', {
+                const res = await apiFetch('/api/push/send-daily-test', {
                     method: 'POST',
                     credentials: 'same-origin',
                 });
@@ -255,6 +300,8 @@
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
+        syncPushSubscriptionToServer,
+        renewPushSubscription,
         registerThisPhoneOnly,
         confirmPushOnThisPhone,
         confirmWebPushWithServerTest,

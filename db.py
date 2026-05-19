@@ -2117,6 +2117,34 @@ def prune_push_subscriptions_for_user(
         conn.close()
 
 
+def list_user_ids_with_daily_reminders_enabled() -> list[int]:
+    """User ids with notifications.dailyEnabled in ui_preferences_json (for cron diagnostics)."""
+    conn = get_conn()
+    cur = conn.cursor()
+    out: list[int] = []
+    try:
+        cur.execute("SELECT id, ui_preferences_json FROM users")
+        for row in cur.fetchall():
+            d = row_to_dict(row)
+            uid = int(d.get("id") or 0)
+            if uid <= 0:
+                continue
+            raw = d.get("ui_preferences_json")
+            if not isinstance(raw, str) or not raw.strip():
+                out.append(uid)
+                continue
+            try:
+                blob = json.loads(raw)
+                n = blob.get("notifications") if isinstance(blob, dict) else {}
+                if not isinstance(n, dict) or n.get("dailyEnabled", True) is not False:
+                    out.append(uid)
+            except Exception:
+                out.append(uid)
+        return out
+    finally:
+        conn.close()
+
+
 def list_push_subscriptions_grouped_by_user():
     """Return {user_id: [subscription_dict, ...]} newest device first."""
     conn = get_conn()

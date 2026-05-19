@@ -2471,7 +2471,7 @@ def api_push_vapid_public_key():
 @app.route("/api/push/subscribe", methods=["POST"])
 def api_push_subscribe():
     """Save browser PushSubscription for the logged-in user (PWA true push)."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     data = request.get_json(silent=True) or {}
@@ -2517,7 +2517,7 @@ def api_push_unsubscribe():
 @app.route("/api/push/preferences", methods=["POST"])
 def api_push_preferences():
     """Sync PWA notification toggles + reminder time to server for cron dispatch."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     data = request.get_json(silent=True)
@@ -2565,7 +2565,7 @@ def api_push_schedule_status():
 @app.route("/api/push/prune-devices", methods=["POST"])
 def api_push_prune_devices():
     """Keep only this phone's push endpoint (newest registration)."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     data = request.get_json(silent=True) or {}
@@ -2585,7 +2585,7 @@ def api_push_prune_devices():
 @app.route("/api/push/reset-daily-reminder", methods=["POST"])
 def api_push_reset_daily_reminder():
     """Clear server-side 'already sent today' so the next window can fire again (testing / missed banner)."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     push_service.clear_daily_reminder_state(user_id)
@@ -2611,7 +2611,7 @@ def api_push_delivery_ack():
 @app.route("/api/push/send-daily-test", methods=["POST"])
 def api_push_send_daily_test():
     """Send the real daily-reminder push now (same title/body/tag as cron)."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     if not push_service.push_configured():
@@ -2624,7 +2624,7 @@ def api_push_send_daily_test():
 @app.route("/api/push/test", methods=["POST"])
 def api_push_test():
     """PWA: send one test push immediately (logged-in user)."""
-    user_id, auth_err = _require_authenticated_user()
+    user_id, auth_err = _require_authenticated_user(check_csrf=False)
     if auth_err:
         return auth_err
     if not push_service.push_configured():
