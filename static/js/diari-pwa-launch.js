@@ -6,9 +6,11 @@
 
     const LOADING_SRC = '/noto-emoji/basic_loading_bar.json';
     const EXPLOSION_SRC = '/noto-emoji/explosion.json';
-    const LOGO_SRC = '/diariclogo-pwa-192.png';
+    /** Transparent artwork only — no sage-green PWA icon box. */
+    const LOGO_SRC = '/diariclogo.png';
     const SESSION_KEY = 'diariPwaLaunchDone';
-    const MAX_WAIT_MS = 12000;
+    const MAX_WAIT_MS = 14000;
+    const BRAND_SHOW_AT_PROGRESS = 0.38;
 
     let finished = true;
     let finishWaiters = [];
@@ -92,7 +94,9 @@
             /* ignore */
         }
         const root = g.document.documentElement;
-        if (root) root.classList.remove('diari-pwa-launch-active');
+        if (root) {
+            root.classList.remove('diari-pwa-launch-active', 'diari-pwa-launch-pending');
+        }
         if (overlayEl && overlayEl.parentNode) {
             overlayEl.parentNode.removeChild(overlayEl);
         }
@@ -106,6 +110,17 @@
     function notifyAppReady() {
         appReady = true;
         tryRevealApp();
+    }
+
+    function paintWhiteShell() {
+        const root = g.document.documentElement;
+        if (root) {
+            root.classList.add('diari-pwa-launch-pending', 'diari-pwa-launch-active');
+            root.style.backgroundColor = '#ffffff';
+        }
+        if (g.document.body) {
+            g.document.body.style.backgroundColor = '#ffffff';
+        }
     }
 
     function loadScript(src) {
@@ -146,7 +161,7 @@
                 resolve();
             }
             anim.addEventListener('complete', done);
-            g.setTimeout(resolve, 8000);
+            g.setTimeout(resolve, 9000);
         });
     }
 
@@ -179,8 +194,8 @@
         logo.className = 'diari-pwa-launch__logo';
         logo.src = LOGO_SRC;
         logo.alt = '';
-        logo.width = 112;
-        logo.height = 112;
+        logo.width = 168;
+        logo.height = 168;
         logo.decoding = 'async';
 
         const title = g.document.createElement('p');
@@ -211,11 +226,18 @@
         });
     }
 
+    function mountOverlayImmediately() {
+        if (overlayEl) return overlayEl;
+        paintWhiteShell();
+        overlayEl = buildOverlay();
+        const mountTarget = g.document.body || g.document.documentElement;
+        mountTarget.appendChild(overlayEl);
+        return overlayEl;
+    }
+
     async function runLaunchSequence() {
         finished = false;
-        g.document.documentElement.classList.add('diari-pwa-launch-active');
-        overlayEl = buildOverlay();
-        g.document.body.appendChild(overlayEl);
+        mountOverlayImmediately();
 
         const loadingMount = g.document.getElementById('diariPwaLaunchLoading');
         const explosionWrap = g.document.getElementById('diariPwaLaunchExplosionWrap');
@@ -244,10 +266,13 @@
             const explosionData = await fetchAnimation(EXPLOSION_SRC);
             const explosionAnim = playLottie(explosionMount, explosionData, false);
             let brandShown = false;
+            const showBrandAtFrame = Math.max(
+                1,
+                Math.floor(explosionAnim.totalFrames * BRAND_SHOW_AT_PROGRESS)
+            );
             explosionAnim.addEventListener('enterFrame', function () {
                 if (brandShown) return;
-                const mid = explosionAnim.totalFrames * 0.42;
-                if (explosionAnim.currentFrame >= mid) {
+                if (explosionAnim.currentFrame >= showBrandAtFrame) {
                     brandShown = true;
                     brandEl.classList.add('is-visible');
                 }
@@ -272,6 +297,7 @@
             finished = true;
             return;
         }
+        paintWhiteShell();
         if (g.document.body) {
             void runLaunchSequence();
         } else {

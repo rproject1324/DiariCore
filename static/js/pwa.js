@@ -4,6 +4,24 @@
 (function () {
     'use strict';
 
+    /* PWA: white screen immediately so the install icon splash is not visible before loading bar. */
+    (function paintPwaLaunchWhiteFirst() {
+        try {
+            var standalone =
+                (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                window.navigator.standalone === true;
+            if (!standalone) return;
+            var html = document.documentElement;
+            html.classList.add('diari-pwa-launch-pending');
+            html.style.backgroundColor = '#ffffff';
+            if (document.body) {
+                document.body.style.backgroundColor = '#ffffff';
+            }
+        } catch (_) {
+            /* ignore */
+        }
+    })();
+
     const MANIFEST_HREF = '/manifest.webmanifest';
     const SW_URL = '/service-worker.js';
     const ICON_HREF = '/diariclogo.png';
