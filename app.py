@@ -655,11 +655,13 @@ def ensure_db():
     if not getattr(app, "_db_ready", False):
         db.init_db()
         app._db_ready = True
-    # Fallback if gunicorn post_fork did not run (wrong start command); idempotent per PID.
-    try:
-        push_scheduler.start(worker_id=os.getpid())
-    except Exception:
-        pass
+    # Fallback if gunicorn post_fork did not run — only attempt once per worker (avoid per-request overhead).
+    if not getattr(app, "_push_scheduler_bootstrapped", False):
+        app._push_scheduler_bootstrapped = True
+        try:
+            push_scheduler.start(worker_id=os.getpid())
+        except Exception:
+            pass
 
 
 @app.route("/api/health")
