@@ -1847,7 +1847,7 @@
     let remoteStateWatchStarted = false;
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
-    const LIVE_REMOTE_SYNC_MS = 3000;
+    const LIVE_REMOTE_SYNC_MS = 45000;
     let remotePullPromise = null;
     let syncEventSource = null;
     let syncEventSourceRetries = 0;
@@ -2025,8 +2025,28 @@
         });
     }
 
+    function hasUsableLocalCache() {
+        if (!getUserId()) return false;
+        if (getSessionUser()) return true;
+        try {
+            return readEntriesCache().length > 0;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Pages call this before reading localStorage. If we already have cache, return immediately
+     * and refresh from Railway in the background (avoids blank screen while /api/sync/state runs).
+     */
     async function awaitServerState() {
         if (!getUserId()) return { ok: false, reason: 'anon' };
+        if (hasUsableLocalCache()) {
+            if (!bootServerSyncPromise) {
+                startBootServerSync();
+            }
+            return { ok: true, reason: 'cache' };
+        }
         if (bootServerSyncPromise) {
             return bootServerSyncPromise;
         }

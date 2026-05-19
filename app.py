@@ -1165,10 +1165,10 @@ def api_sync_stream():
                 yield f"data: {payload}\n\n"
             else:
                 heartbeats += 1
-                if heartbeats >= 8:
+                if heartbeats >= 4:
                     heartbeats = 0
                     yield ": ping\n\n"
-            time.sleep(2)
+            time.sleep(5)
 
     return Response(
         stream_with_context(generate()),
@@ -2458,8 +2458,11 @@ def pwa_service_worker():
 def api_push_vapid_public_key():
     """PWA Web Push: public VAPID key for PushManager.subscribe."""
     key = push_service.vapid_public_key()
-    health = push_service.push_health()
-    health.update(push_service.push_scheduler_health())
+    if request.args.get("health") == "1":
+        health = push_service.push_health()
+        health.update(push_service.push_scheduler_health())
+    else:
+        health = {"pushBackendVersion": push_service.PUSH_BACKEND_VERSION}
     if not key:
         return jsonify({"success": False, "error": "Web Push is not configured on this server.", **health}), 503
     return jsonify({"success": True, "publicKey": key, **health}), 200
