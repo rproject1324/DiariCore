@@ -114,21 +114,8 @@
     }
 
     async function confirmWebPushWithServerTest() {
-        const test = await sendTestPush();
-        if (test && test.ok) {
-            try {
-                global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
-            } catch (_) {
-                /* ignore */
-            }
-            return true;
-        }
-        try {
-            global.localStorage.removeItem(WEB_PUSH_ACTIVE_KEY);
-        } catch (_) {
-            /* ignore */
-        }
-        return false;
+        const result = await confirmPushOnThisPhone();
+        return !!result.ok;
     }
 
     async function sendTestPush() {
@@ -189,6 +176,10 @@
         }
     }
 
+    function delay(ms) {
+        return new Promise((resolve) => global.setTimeout(resolve, ms));
+    }
+
     async function registerThisPhoneOnly() {
         if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
         const subscribed = await subscribeWebPush();
@@ -211,11 +202,61 @@
         return { ok: res.ok && data.success, ...data };
     }
 
+    /**
+     * Subscribe + prune, then try test push (FCM may need a second after re-subscribe).
+     */
+    async function confirmPushOnThisPhone() {
+        const reg = await registerThisPhoneOnly();
+        if (!reg.ok) {
+            return { ok: false, error: reg.error || 'Could not register this phone' };
+        }
+        await delay(2000);
+        let test = await sendTestPush();
+        if (!test || !test.ok) {
+            try {
+                const res = await fetch('/api/push/send-daily-test', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+                test = await res.json().catch(() => ({}));
+            } catch (_) {
+                test = {};
+            }
+        }
+        if (test && test.ok) {
+            try {
+                global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+            } catch (_) {
+                /* ignore */
+            }
+            return { ok: true, tested: true };
+        }
+        const devices = reg.schedule && reg.schedule.subscribedDevices;
+        if (devices >= 1) {
+            try {
+                global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+            } catch (_) {
+                /* ignore */
+            }
+            return {
+                ok: true,
+                soft: true,
+                message:
+                    'This phone is registered for reminders. Tap “Test daily nudge now”, then fully close the app.',
+            };
+        }
+        return {
+            ok: false,
+            error: (test && test.error) || 'Test push did not send. Check notification permission for Chrome.',
+        };
+    }
+
     global.DiariPwaWebPush = {
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
         registerThisPhoneOnly,
+        confirmPushOnThisPhone,
         confirmWebPushWithServerTest,
         sendTestPush,
         syncNotificationPrefsToServer,

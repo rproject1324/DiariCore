@@ -2876,26 +2876,26 @@ function initializeProfilePushStatusPanel() {
         thisPhoneBtn.addEventListener('click', async function () {
             thisPhoneBtn.disabled = true;
             try {
-                if (window.DiariPwaWebPush?.registerThisPhoneOnly) {
-                    await window.DiariPwaWebPush.registerThisPhoneOnly();
-                } else if (window.DiariPwaWebPush?.subscribeWebPush) {
-                    await window.DiariPwaWebPush.subscribeWebPush();
+                let result = { ok: false };
+                if (window.DiariPwaWebPush?.confirmPushOnThisPhone) {
+                    result = await window.DiariPwaWebPush.confirmPushOnThisPhone();
+                } else if (window.DiariPwaWebPush?.registerThisPhoneOnly) {
+                    const reg = await window.DiariPwaWebPush.registerThisPhoneOnly();
+                    result = { ok: !!reg.ok };
                 }
-                if (window.DiariPwaWebPush?.sendTestPush) {
-                    const test = await window.DiariPwaWebPush.sendTestPush();
-                    if (test && test.ok) {
-                        showNotification(
-                            'This phone is now the main device for reminders. Try your reminder time again.',
-                            'success',
-                            6000
-                        );
-                    } else {
-                        showNotification(
-                            (test && test.error) || 'Could not confirm push on this phone.',
-                            'warning',
-                            5000
-                        );
-                    }
+                if (result.ok) {
+                    showNotification(
+                        result.message ||
+                            'This phone is set for reminders. Tap “Test daily nudge now”, then close the app to verify.',
+                        result.soft ? 'info' : 'success',
+                        7000
+                    );
+                } else {
+                    showNotification(
+                        result.error || 'Could not register push on this phone.',
+                        'warning',
+                        6000
+                    );
                 }
                 await fetch('/api/push/reset-daily-reminder', {
                     method: 'POST',
