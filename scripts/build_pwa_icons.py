@@ -19,6 +19,7 @@ WHITE = (0xFF, 0xFF, 0xFF, 255)
 BRAND_GREEN = (0x6F, 0x8F, 0x7F, 255)
 ART_SCALE = 0.56
 MASKABLE_SCALE = 0.72
+NOTIF_ART_SCALE = 0.78
 
 
 def _compose(size: int, scale: float, dest: Path, bg: tuple[int, int, int, int]) -> None:
@@ -45,6 +46,8 @@ def main() -> None:
         _compose(size, scale, IMG / name, WHITE)
     _compose(192, ART_SCALE, IMG / "diariclogo-pwa-home-192.png", BRAND_GREEN)
     _compose(512, ART_SCALE, IMG / "diariclogo-pwa-home-512.png", BRAND_GREEN)
+    _compose(192, NOTIF_ART_SCALE, IMG / "diariclogo-pwa-notif-192.png", BRAND_GREEN)
+    _compose(512, NOTIF_ART_SCALE, IMG / "diariclogo-pwa-notif-512.png", BRAND_GREEN)
 
 
 if __name__ == "__main__":

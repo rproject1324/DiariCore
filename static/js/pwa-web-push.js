@@ -109,7 +109,7 @@
     function buildNotificationPrefsPayload() {
         return {
             notifications: {
-                dailyEnabled: global.localStorage.getItem('diariCorePwaDailyRemindersEnabled') !== '0',
+                dailyEnabled: global.localStorage.getItem('diariCorePwaDailyRemindersEnabled') === '1',
                 streakEnabled: global.localStorage.getItem('diariCorePwaStreakRemindersEnabled') !== '0',
                 insightEnabled: global.localStorage.getItem('diariCorePwaInsightFollowupsEnabled') !== '0',
                 reminderTimeOverride: getEffectiveReminderHHmm(),

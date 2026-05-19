@@ -79,10 +79,11 @@
     function isDailyRemindersEnabled() {
         try {
             const v = global.localStorage.getItem(DAILY_ENABLED_KEY);
+            if (v === null || v === undefined || v === '') return false;
             if (v === '0' || v === 'false') return false;
-            return true;
+            return v === '1' || v === 'true';
         } catch (_) {
-            return true;
+            return false;
         }
     }
 
@@ -324,7 +325,13 @@
                 }
             }
         });
-        global.addEventListener('online', () => kickWorkerCheck());
+        global.addEventListener('online', () => {
+            kickWorkerCheck();
+            applyPwaNotificationsOfflineState();
+        });
+        global.addEventListener('offline', () => applyPwaNotificationsOfflineState());
+        global.addEventListener('diari-remote-state-refreshed', () => applyPwaNotificationsOfflineState());
+        global.addEventListener('diari-offline-sync-complete', () => applyPwaNotificationsOfflineState());
     }
 
     function startScheduler() {
@@ -356,6 +363,10 @@
             if (dailyToggle.dataset.pwaNotifyBound !== '1') {
                 dailyToggle.dataset.pwaNotifyBound = '1';
                 dailyToggle.addEventListener('change', async () => {
+                    if (isPwaNotificationsOffline()) {
+                        dailyToggle.checked = isDailyRemindersEnabled();
+                        return;
+                    }
                     setDailyRemindersEnabled(dailyToggle.checked);
                     if (dailyToggle.checked) await requestPermissionIfNeeded();
                     await syncPrefsToWorker();
@@ -365,26 +376,39 @@
                 });
             }
         }
-        const timeInput = document.getElementById('profileReminderTimeInput');
-        if (timeInput) {
-            timeInput.value = getEffectiveReminderHHmm();
-            if (timeInput.dataset.pwaNotifyTimeBound !== '1') {
-                timeInput.dataset.pwaNotifyTimeBound = '1';
-                timeInput.addEventListener('change', () => {
-                    try {
-                        const v = timeInput.value;
-                        if (v && /^\d{2}:\d{2}$/.test(v)) {
-                            global.localStorage.setItem(REMINDER_OVERRIDE_KEY, v);
-                        }
-                    } catch (_) {
-                        /* ignore */
-                    }
-                    void syncPrefsToWorker();
-                    if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
-                        void global.DiariPwaWebPush.syncNotificationPrefsToServer();
-                    }
-                });
+        applyPwaNotificationsOfflineState();
+    }
+
+    function isPwaNotificationsOffline() {
+        try {
+            if (global.DiariOffline?.isPwaOfflineNow) {
+                return global.DiariOffline.isPwaOfflineNow();
             }
+        } catch (_) {
+            /* ignore */
+        }
+        return global.navigator?.onLine === false;
+    }
+
+    function applyPwaNotificationsOfflineState() {
+        if (!isPwaStandalone()) return;
+        const card = document.querySelector('.profile-prefs-card--notifications');
+        const dailyToggle = document.getElementById('toggleDailyReminders');
+        const timeInput = document.getElementById('profileReminderTimeInput');
+        const reminderRow = document.querySelector('.notifications-item--reminder-time');
+        const offline = isPwaNotificationsOffline();
+        if (card) {
+            card.classList.toggle('pwa-notifications-offline', offline);
+        }
+        if (dailyToggle) {
+            dailyToggle.disabled = offline;
+        }
+        if (timeInput) {
+            timeInput.disabled = offline;
+            timeInput.setAttribute('aria-disabled', offline ? 'true' : 'false');
+        }
+        if (reminderRow) {
+            reminderRow.classList.toggle('pwa-notifications-offline', offline);
         }
     }
 
@@ -449,6 +473,7 @@
         startScheduler,
         stopScheduler,
         hydrateProfileNotificationUi,
+        applyPwaNotificationsOfflineState,
         NOTIFY_TZ,
     };
 

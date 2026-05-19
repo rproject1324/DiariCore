@@ -148,16 +148,58 @@ html.theme-dark .pwa-install-banner__inner {
 /* PWA Profile — reminder time picker arrow inset from right edge */
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-    padding-right: 2.15rem;
+    padding-right: 2.65rem;
     text-align: center;
 }
 
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-    margin-right: 0.45rem;
+    margin-right: 0.85rem;
     margin-left: 0;
     cursor: pointer;
     opacity: 0.92;
+}
+
+/* PWA Profile — daily push needs internet; grey out when offline */
+html.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline,
+html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline {
+    position: relative;
+}
+
+html.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline::after,
+html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline::after {
+    content: 'Daily reminders need internet. They will work again when you are back online.';
+    display: block;
+    margin: 0.65rem 0 0;
+    padding: 0.65rem 0.85rem;
+    border-radius: 10px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--text-secondary, #5c6b73);
+    background: var(--background-soft, #eef2f0);
+    border: 1px solid var(--border-color, #e0e6e3);
+}
+
+html.theme-dark.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline::after,
+html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline::after {
+    color: var(--text-secondary, #9fb0b8);
+    background: var(--background-soft, #1a2429);
+    border-color: var(--border-color, #2f3b42);
+}
+
+html.diari-pwa-standalone body.page-profile .notifications-item--reminder-time.pwa-notifications-offline .time-input,
+html[data-diari-pwa='standalone'] body.page-profile .notifications-item--reminder-time.pwa-notifications-offline .time-input,
+html.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline .notifications-item:first-of-type,
+html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline .notifications-item:first-of-type,
+html.diari-pwa-standalone body.page-profile .notifications-item--reminder-time.pwa-notifications-offline,
+html[data-diari-pwa='standalone'] body.page-profile .notifications-item--reminder-time.pwa-notifications-offline {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+html.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline #toggleDailyReminders:disabled + .toggle-slider,
+html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline #toggleDailyReminders:disabled + .toggle-slider {
+    opacity: 0.5;
 }
 
 /* PWA Profile — toasts use theme tokens (success reminder message) */

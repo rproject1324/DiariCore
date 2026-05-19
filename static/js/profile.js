@@ -2742,7 +2742,11 @@ function buildPushNotificationPrefsPayloadForServer() {
     let streakEnabled = true;
     let insightEnabled = true;
     try {
-        dailyEnabled = localStorage.getItem('diariCorePwaDailyRemindersEnabled') !== '0';
+        if (isPwaProfileContext() && window.DiariPwaNotifications?.isDailyRemindersEnabled) {
+            dailyEnabled = window.DiariPwaNotifications.isDailyRemindersEnabled();
+        } else {
+            dailyEnabled = localStorage.getItem('diariCorePwaDailyRemindersEnabled') !== '0';
+        }
         streakEnabled = localStorage.getItem('diariCorePwaStreakRemindersEnabled') !== '0';
         insightEnabled = localStorage.getItem('diariCorePwaInsightFollowupsEnabled') !== '0';
     } catch (_) {
@@ -2839,8 +2843,15 @@ function initializeReminderTimePreference() {
             }
             if (!(await isPwaOfflineForUserActions())) {
                 const reminderSavedMsg = 'Reminder time set successfully.';
-                if (window.DiariToast && typeof window.DiariToast.show === 'function') {
-                    window.DiariToast.show(reminderSavedMsg, 'success', 3500);
+                if (isPwaProfileContext()) {
+                    document
+                        .querySelectorAll('.diari-toast, .profile-notification')
+                        .forEach(function (el) {
+                            el.remove();
+                        });
+                    if (window.DiariToast && typeof window.DiariToast.show === 'function') {
+                        window.DiariToast.show(reminderSavedMsg, 'success', 3500);
+                    }
                 } else {
                     showNotification(reminderSavedMsg, 'success', 3500);
                 }
@@ -2851,7 +2862,9 @@ function initializeReminderTimePreference() {
         }
     }
     input.addEventListener('change', onReminderTimeChanged);
-    input.addEventListener('input', onReminderTimeChanged);
+    if (!isPwaProfileContext()) {
+        input.addEventListener('input', onReminderTimeChanged);
+    }
 }
 
 // Initialize Preference Toggles
