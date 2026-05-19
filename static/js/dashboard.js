@@ -283,56 +283,20 @@ function aggregateCalendarWeekMood(entries) {
     return { mondayMs, dayScores, dayFeelings, chartData, entriesInWeek };
 }
 
-/**
- * Consecutive journal days ending at your most recent entry day, as long as that day is
- * today or yesterday (one-day grace so evening-only users are not shown 0 in the morning).
- * Uses the same local calendar day rules as `startOfLocalDayMsFromEntry` / weekly chart.
- */
+/** @see diari-streak.js — shared across desktop, mobile, and PWA */
 function computeEntryStreak(entries) {
-    const empty = { streak: 0, streakDayMs: new Set(), hasEntryToday: false };
-    if (!Array.isArray(entries) || entries.length === 0) return empty;
-
-    const daySet = new Set();
-    entries.forEach((e) => {
-        if (!e) return;
-        const raw = e.date || e.createdAt;
-        if (!raw) return;
-        const ms = startOfLocalDayMsFromEntry(raw);
-        if (ms != null) daySet.add(ms);
-    });
-    if (daySet.size === 0) return empty;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayMs = today.getTime();
-    const hasEntryToday = daySet.has(todayMs);
-
-    let anchorMs = null;
-    daySet.forEach((t) => {
-        if (t > todayMs) return;
-        if (anchorMs == null || t > anchorMs) anchorMs = t;
-    });
-    if (anchorMs == null) return empty;
-
-    const gapDays = Math.floor((todayMs - anchorMs) / MS_PER_DAY);
-    if (gapDays > 1) return { streak: 0, streakDayMs: new Set(), hasEntryToday };
-
-    const streakDayMs = new Set();
-    let streak = 0;
-    for (let i = 0; i < 400; i += 1) {
-        const d = anchorMs - i * MS_PER_DAY;
-        if (daySet.has(d)) {
-            streak += 1;
-            streakDayMs.add(d);
-        } else break;
+    if (window.DiariStreak && typeof window.DiariStreak.computeEntryStreak === 'function') {
+        return window.DiariStreak.computeEntryStreak(entries);
     }
-    return { streak, streakDayMs, hasEntryToday };
+    return { streak: 0, streakDayMs: new Set(), hasEntryToday: false };
 }
 
 function streakPanelHintText(streak, hasEntryToday) {
+    if (window.DiariStreak && typeof window.DiariStreak.streakPanelHintText === 'function') {
+        return window.DiariStreak.streakPanelHintText(streak, hasEntryToday);
+    }
     if (streak <= 0) return 'Journal today to start.';
-    if (!hasEntryToday) return 'Log today to keep your streak going.';
-    if (streak === 1) return 'Log again tomorrow to extend it.';
+    if (!hasEntryToday) return 'Log today before midnight to keep your streak.';
     return "You're on a roll — keep it up.";
 }
 

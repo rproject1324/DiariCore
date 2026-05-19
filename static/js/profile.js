@@ -233,38 +233,10 @@ function profileJournalDayStartMs(raw) {
 }
 
 function calculateEntryStreak(entries) {
-    if (!Array.isArray(entries) || entries.length === 0) return 0;
-    const daySet = new Set();
-    entries.forEach((e) => {
-        if (!e) return;
-        const raw = e.date || e.createdAt;
-        if (!raw) return;
-        const ms = profileJournalDayStartMs(raw);
-        if (ms != null) daySet.add(ms);
-    });
-    if (daySet.size === 0) return 0;
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayMs = today.getTime();
-
-    let anchorMs = null;
-    daySet.forEach((t) => {
-        if (t > todayMs) return;
-        if (anchorMs == null || t > anchorMs) anchorMs = t;
-    });
-    if (anchorMs == null) return 0;
-
-    const gapDays = Math.floor((todayMs - anchorMs) / PROFILE_MS_PER_DAY);
-    if (gapDays > 1) return 0;
-
-    let streak = 0;
-    for (let i = 0; i < 400; i += 1) {
-        const d = anchorMs - i * PROFILE_MS_PER_DAY;
-        if (daySet.has(d)) streak += 1;
-        else break;
+    if (window.DiariStreak && typeof window.DiariStreak.streakCount === 'function') {
+        return window.DiariStreak.streakCount(entries);
     }
-    return streak;
+    return 0;
 }
 
 /** Monday 00:00 local for the Mon–Sun week containing `ref` (same week model as the dashboard). */
