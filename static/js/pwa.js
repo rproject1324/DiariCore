@@ -387,6 +387,7 @@
     }
 
     const PWA_NOTIFY_SCRIPTS = [
+        'diari-security.js',
         'most-active-time.js',
         'pwa-notification-idb.js',
         'pwa-notification-templates.js',
@@ -401,18 +402,28 @@
         }
         try {
             const push = await window.DiariPwaWebPush.waitForReady(15000);
+            let reg = { ok: false };
             if (push.ensureServerPushRegistration) {
-                await push.ensureServerPushRegistration({ force: true, maxAttempts: 6, quiet: true });
+                reg = await push.ensureServerPushRegistration({
+                    force: true,
+                    maxAttempts: 6,
+                    quiet: true,
+                });
             } else if (push.maintainPushRegistration) {
-                await push.maintainPushRegistration({ force: true });
+                reg = await push.maintainPushRegistration({ force: true });
             } else if (push.registerPushForReminders) {
-                await push.registerPushForReminders({ quiet: true, force: true });
+                reg = await push.registerPushForReminders({ quiet: true, force: true });
             }
-            if (push.syncNotificationPrefsToServer) {
+            if (reg.ok && push.syncNotificationPrefsToServer) {
                 await push.syncNotificationPrefsToServer();
+            } else if (!reg.ok && push.startRegistrationWatchdog) {
+                push.startRegistrationWatchdog();
             }
         } catch (e) {
             console.warn('[PWA] push registration boot failed:', e);
+            if (window.DiariPwaWebPush?.startRegistrationWatchdog) {
+                window.DiariPwaWebPush.startRegistrationWatchdog();
+            }
         }
     }
 

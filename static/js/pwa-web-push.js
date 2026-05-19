@@ -6,8 +6,10 @@
 
     const WEB_PUSH_ACTIVE_KEY = 'diariCoreWebPushActive';
     const LAST_SAVE_KEY = 'diariCorePushLastSave';
+    const PUSH_STATUS_KEY = 'diariCorePushLastStatus';
     const SESSION_REGISTERED_KEY = 'diariPwaPushSessionRegistered';
     const SAVE_DEBOUNCE_MS = 300000;
+    const SESSION_WAIT_MS = 45000;
 
     function isPwaStandalone() {
         try {
@@ -125,13 +127,91 @@
         return res.json().catch(() => ({}));
     }
 
+    function hasLocalLoggedInUser() {
+        try {
+            const raw = global.localStorage.getItem('diariCoreUser');
+            if (!raw) return false;
+            const u = JSON.parse(raw);
+            if (!u || u.isLoggedIn === false) return false;
+            const id = u.id != null ? u.id : u.userId;
+            return id != null && id !== '' && Number(id) !== 0;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function writePushStatus(patch) {
+        try {
+            const prev = JSON.parse(global.localStorage.getItem(PUSH_STATUS_KEY) || '{}');
+            global.localStorage.setItem(
+                PUSH_STATUS_KEY,
+                JSON.stringify(
+                    Object.assign({}, prev, patch, { at: new Date().toISOString() })
+                )
+            );
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
+    function clearSessionRegistered() {
+        try {
+            global.sessionStorage.removeItem(SESSION_REGISTERED_KEY);
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
     async function countServerDevices() {
         try {
             const status = await fetchScheduleStatus();
+            if (status && status.success === false) return 0;
             return Number(status.subscribedDevices ?? 0);
         } catch (_) {
             return 0;
         }
+    }
+
+    /**
+     * Wait until Flask session accepts API calls (subscribe fails with 401 before login cookie exists).
+     */
+    async function waitForServerSession(timeoutMs) {
+        const max = timeoutMs || SESSION_WAIT_MS;
+        const start = Date.now();
+        while (Date.now() - start < max) {
+            if (!hasLocalLoggedInUser()) {
+                await delay(400);
+                continue;
+            }
+            try {
+                const res = await apiFetch('/api/push/schedule-status', {
+                    credentials: 'same-origin',
+                });
+                if (res.status === 401) {
+                    clearSessionRegistered();
+                    await delay(600);
+                    continue;
+                }
+                if (res.ok) {
+                    return true;
+                }
+            } catch (_) {
+                /* retry */
+            }
+            await delay(500);
+        }
+        return false;
+    }
+
+    async function postNotificationPrefsToServer() {
+        const body = buildNotificationPrefsPayload();
+        const res = await apiFetch('/api/push/preferences', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        return res.json().catch(() => ({}));
     }
 
     async function saveSubscriptionOnServer(sub) {
@@ -147,8 +227,12 @@
             body: JSON.stringify(body),
         });
         const data = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+            clearSessionRegistered();
+            throw new Error('Please sign in again to register push reminders.');
+        }
         if (!res.ok || !data.success) {
-            throw new Error(data.error || 'Subscribe failed');
+            throw new Error(data.error || 'Subscribe failed (HTTP ' + res.status + ')');
         }
         return data;
     }
@@ -343,6 +427,34 @@
      */
     let lastMaintainAttemptMs = 0;
     let maintainInFlight = null;
+    let registrationWatchdog = null;
+
+    function startRegistrationWatchdog() {
+        if (registrationWatchdog || !isPwaStandalone()) return;
+        let ticks = 0;
+        registrationWatchdog = global.setInterval(function () {
+            ticks += 1;
+            if (ticks > 10) {
+                global.clearInterval(registrationWatchdog);
+                registrationWatchdog = null;
+                return;
+            }
+            try {
+                if (global.sessionStorage.getItem(SESSION_REGISTERED_KEY) === '1') {
+                    global.clearInterval(registrationWatchdog);
+                    registrationWatchdog = null;
+                    return;
+                }
+            } catch (_) {
+                /* ignore */
+            }
+            void ensureServerPushRegistration({
+                quiet: true,
+                maxAttempts: 3,
+                force: true,
+            });
+        }, 12000);
+    }
 
     /**
      * Classmate-style flow: SW ready → PushManager.subscribe(VAPID) → POST /api/push/subscribe
@@ -353,18 +465,35 @@
         const maxAttempts = (options && options.maxAttempts) || 6;
         const force = !!(options && options.force);
         if (!isPwaStandalone()) {
+            writePushStatus({ ok: false, error: 'not_pwa' });
             return { ok: false, error: 'Open DiariCore from your home-screen app, not a browser tab.' };
         }
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            writePushStatus({ ok: false, error: 'permission_denied' });
             return {
                 ok: false,
                 error: 'Allow notifications for Chrome in Android Settings, then reopen DiariCore.',
             };
         }
         if (!('serviceWorker' in navigator) || !('PushManager' in global)) {
+            writePushStatus({ ok: false, error: 'unsupported' });
             return { ok: false, error: 'Push not supported on this browser' };
         }
+        if (!hasLocalLoggedInUser()) {
+            writePushStatus({ ok: false, error: 'not_logged_in_local' });
+            return { ok: false, error: 'Sign in first, then reopen DiariCore from your home screen.' };
+        }
+        const sessionReady = await waitForServerSession(options && options.sessionWaitMs);
+        if (!sessionReady) {
+            writePushStatus({ ok: false, error: 'server_session_timeout' });
+            startRegistrationWatchdog();
+            return {
+                ok: false,
+                error: 'Could not reach the server while signed in. Check connection and open DiariCore again.',
+            };
+        }
         let lastError = 'Could not register this phone on the server';
+        let lastSchedule = null;
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             try {
                 const result = await syncPushSubscriptionToServer({
@@ -377,7 +506,17 @@
                 if (devices < 1) {
                     devices = await countServerDevices();
                 }
+                if (result.schedule) {
+                    lastSchedule = result.schedule;
+                }
                 if (result.ok && devices >= 1) {
+                    try {
+                        await postNotificationPrefsToServer();
+                    } catch (prefErr) {
+                        if (!quiet) {
+                            console.warn('[DiariPwaWebPush] prefs sync after subscribe', prefErr);
+                        }
+                    }
                     try {
                         global.sessionStorage.setItem(SESSION_REGISTERED_KEY, '1');
                     } catch (_) {
@@ -391,8 +530,14 @@
                     if (global.DiariPwaNotifications?.syncPrefsToWorker) {
                         void global.DiariPwaNotifications.syncPrefsToWorker();
                     }
+                    writePushStatus({
+                        ok: true,
+                        subscribedDevices: devices,
+                        reminderTime: buildNotificationPrefsPayload().notifications.reminderTimeOverride,
+                        schedule: lastSchedule,
+                    });
                     global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
-                    return { ok: true, subscribedDevices: devices, schedule: result.schedule };
+                    return { ok: true, subscribedDevices: devices, schedule: result.schedule || lastSchedule };
                 }
                 if (result && result.error) {
                     lastError = result.error;
@@ -410,10 +555,16 @@
             if (diag.error) {
                 lastError = diag.error;
             }
+            writePushStatus({
+                ok: false,
+                error: lastError,
+                diagnostics: diag,
+            });
         } catch (_) {
-            /* ignore */
+            writePushStatus({ ok: false, error: lastError });
         }
-        return { ok: false, error: lastError };
+        startRegistrationWatchdog();
+        return { ok: false, error: lastError, schedule: lastSchedule };
     }
 
     async function registerPushForReminders(options) {
@@ -459,6 +610,13 @@
     function bindPushLifecycleMaintenance() {
         if (bindPushLifecycleMaintenance._bound) return;
         bindPushLifecycleMaintenance._bound = true;
+        function onAuthOrSyncReady() {
+            if (!isPwaStandalone()) return;
+            if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+                return;
+            }
+            void ensureServerPushRegistration({ force: true, maxAttempts: 5, quiet: true });
+        }
         global.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'visible') {
                 void maintainPushRegistration();
@@ -474,6 +632,20 @@
                 syncNotificationPrefsToServerBeacon();
             }
         });
+        global.addEventListener('storage', function (e) {
+            if (e.key === 'diariCoreUser') {
+                if (!e.newValue) {
+                    clearSessionRegistered();
+                    return;
+                }
+                onAuthOrSyncReady();
+            }
+        });
+        ['diari-user-updated', 'diari-offline-sync-complete', 'diari-remote-state-refreshed'].forEach(
+            function (name) {
+                global.addEventListener(name, onAuthOrSyncReady);
+            }
+        );
     }
     bindPushLifecycleMaintenance();
 
@@ -531,6 +703,26 @@
         return res.json().catch(() => ({}));
     }
 
+    /** PWA console helper: register device + send real daily-style test push. */
+    async function runClosedAppPushSelfCheck() {
+        const reg = await ensureServerPushRegistration({
+            force: true,
+            maxAttempts: 6,
+            quiet: false,
+        });
+        if (!reg.ok) {
+            return { ok: false, step: 'register', register: reg };
+        }
+        const res = await apiFetch('/api/push/send-daily-test', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        const test = await res.json().catch(() => ({}));
+        writePushStatus({ ok: !!test.ok, selfCheck: true, register: reg, test: test });
+        return { ok: !!test.ok, register: reg, test: test };
+    }
+
     function syncNotificationPrefsToServerBeacon() {
         if (!isPwaStandalone()) return false;
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
@@ -553,22 +745,33 @@
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
             return;
         }
-        await registerPushForReminders({ quiet: true });
-        const body = buildNotificationPrefsPayload();
+        let registered = false;
         try {
-            const res = await apiFetch('/api/push/preferences', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
+            registered = global.sessionStorage.getItem(SESSION_REGISTERED_KEY) === '1';
+        } catch (_) {
+            registered = false;
+        }
+        if (!registered) {
+            await ensureServerPushRegistration({ quiet: true, maxAttempts: 4, force: true });
+        }
+        try {
+            const data = await postNotificationPrefsToServer();
+            writePushStatus({
+                ok: registered || (await countServerDevices()) >= 1,
+                prefsSynced: true,
+                reminderTime: buildNotificationPrefsPayload().notifications.reminderTimeOverride,
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                console.warn('[DiariPwaWebPush] preferences sync failed', data);
-            }
             return data;
         } catch (_) {
             syncNotificationPrefsToServerBeacon();
+        }
+    }
+
+    function getPushLastStatus() {
+        try {
+            return JSON.parse(global.localStorage.getItem(PUSH_STATUS_KEY) || 'null');
+        } catch (_) {
+            return null;
         }
     }
 
@@ -695,6 +898,9 @@
         subscribeWebPush,
         registerPushForReminders,
         ensureServerPushRegistration,
+        waitForServerSession,
+        getPushLastStatus,
+        startRegistrationWatchdog,
         maintainPushRegistration,
         syncPushSubscriptionToServer,
         renewPushSubscription,
@@ -702,6 +908,7 @@
         confirmPushOnThisPhone,
         confirmWebPushWithServerTest,
         sendTestPush,
+        runClosedAppPushSelfCheck,
         syncNotificationPrefsToServer,
         syncNotificationPrefsToServerBeacon,
         buildNotificationPrefsPayload,

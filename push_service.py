@@ -20,13 +20,13 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v21"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v22"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
 DAILY_PUSH_MAX_ATTEMPTS = max(1, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "2")))
 DISPATCH_WINDOW_MINUTES = max(
-    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
+    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "30"))
 )
 # Do not delete a subscription FCM rejects right after register (token may need a moment).
 PUSH_SUBSCRIPTION_GRACE_SECONDS = max(
