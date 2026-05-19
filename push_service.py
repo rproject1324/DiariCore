@@ -19,6 +19,8 @@ NOTIFY_TZ = ZoneInfo("Asia/Manila")
 MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
+# Bump when push send path changes (visible in /api/push/vapid-public-key).
+PUSH_BACKEND_VERSION = "2026-05-19-send-v3"
 
 
 def _load_templates() -> dict:
@@ -150,16 +152,90 @@ def _get_vapid():
     return None
 
 
+def _vapid_sign_test(v) -> bool:
+    """True if VAPID can sign headers (same path pywebpush uses)."""
+    try:
+        v.sign(
+            {
+                "sub": vapid_claim_email(),
+                "aud": "https://fcm.googleapis.com",
+            }
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _subscription_for_webpush(stored: dict) -> tuple[dict | None, str | None]:
+    """Build pywebpush subscription dict; detect stale VAPID-bound subscriptions."""
+    if not isinstance(stored, dict):
+        return None, "invalid"
+    endpoint = str(stored.get("endpoint") or "").strip()
+    if not endpoint:
+        return None, "invalid"
+    current = vapid_public_key()
+    saved = str(stored.get("_vapidPublicKey") or "").strip()
+    if saved and current and saved != current:
+        return None, "stale_vapid"
+    keys = stored.get("keys")
+    if not isinstance(keys, dict):
+        return None, "missing_keys"
+    p256dh = keys.get("p256dh")
+    auth = keys.get("auth")
+    if not p256dh or not auth:
+        return None, "missing_keys"
+    clean: dict = {
+        "endpoint": endpoint,
+        "keys": {"p256dh": str(p256dh), "auth": str(auth)},
+    }
+    if stored.get("expirationTime") is not None:
+        clean["expirationTime"] = stored["expirationTime"]
+    return clean, None
+
+
+def count_stale_push_subscriptions() -> int:
+    """Devices still registered under a previous VAPID public key."""
+    current = vapid_public_key()
+    if not current:
+        return 0
+    stale = 0
+    for subs in db.list_push_subscriptions_grouped_by_user().values():
+        for sub in subs:
+            saved = str(sub.get("_vapidPublicKey") or "").strip()
+            if saved and saved != current:
+                stale += 1
+    return stale
+
+
+def purge_stale_push_subscriptions() -> int:
+    """Remove device subscriptions registered under an old VAPID public key."""
+    current = vapid_public_key()
+    if not current:
+        return 0
+    removed = 0
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    for subs in grouped.values():
+        for sub in subs:
+            saved = str(sub.get("_vapidPublicKey") or "").strip()
+            if saved and saved != current:
+                ep = str(sub.get("endpoint") or "").strip()
+                if ep and db.delete_push_subscription_by_endpoint(ep):
+                    removed += 1
+    return removed
+
+
 def push_health() -> dict:
     """Diagnostics for Railway / support (no secrets)."""
     pub = vapid_public_key()
     raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
     v = _get_vapid()
     pem_ok = False
+    sign_ok = False
     if v:
         try:
             _ = v.private_key
             pem_ok = True
+            sign_ok = _vapid_sign_test(v)
         except Exception:
             pem_ok = False
     try:
@@ -179,14 +255,17 @@ def push_health() -> dict:
     else:
         private_key_status = "ok"
     return {
-        "configured": bool(pub and v and pem_ok),
+        "pushBackendVersion": PUSH_BACKEND_VERSION,
+        "configured": bool(pub and v and pem_ok and sign_ok),
         "publicKeySet": bool(pub),
         "privateKeySet": private_key_set,
         "privateKeySignable": pem_ok,
+        "vapidCanSign": sign_ok,
         "privateKeyStatus": private_key_status,
         "pywebpushInstalled": pywebpush_ok,
         "subscribedUsers": len(subs),
         "subscribedDevices": sum(len(s) for s in subs.values()),
+        "staleSubscriptionCount": count_stale_push_subscriptions(),
     }
 
 
@@ -203,7 +282,7 @@ def vapid_claim_email() -> str:
 
 def push_configured() -> bool:
     h = push_health()
-    return bool(h.get("configured") and h.get("privateKeySignable"))
+    return bool(h.get("configured") and h.get("privateKeySignable") and h.get("vapidCanSign"))
 
 
 def _manila_now() -> datetime:
@@ -426,15 +505,26 @@ def send_web_push(
     vapid = _get_vapid()
     if not vapid:
         return False, "VAPID keys invalid — set VAPID_PRIVATE_KEY to PEM from scripts/generate_vapid_keys.py"
+    sub_info, sub_err = _subscription_for_webpush(subscription)
+    if sub_err == "stale_vapid":
+        ep = str(subscription.get("endpoint") or "").strip()
+        if ep:
+            db.delete_push_subscription_by_endpoint(ep)
+        return (
+            False,
+            "Device subscribed with old VAPID keys — in the PWA turn notifications off, then on again.",
+        )
+    if not sub_info:
+        return False, f"Invalid push subscription ({sub_err or 'unknown'})."
     try:
         from pywebpush import WebPushException, webpush
     except ImportError:
         return False, "pywebpush not installed on server"
     payload = json.dumps({"title": title, "body": body, "url": url})
     try:
-        # pywebpush treats str keys via Vapid.from_string (raw/der), not PEM — pass instance.
+        # pywebpush treats str keys via Vapid.from_string (raw/der), not PEM — pass Vapid01 instance.
         webpush(
-            subscription_info=subscription,
+            subscription_info=sub_info,
             data=payload,
             vapid_private_key=vapid,
             vapid_claims={"sub": vapid_claim_email()},
@@ -448,10 +538,14 @@ def send_web_push(
             text = (status.text or "")[:200] if status is not None else ""
         except Exception:
             pass
-        if code in (404, 410):
-            endpoint = subscription.get("endpoint")
-            if endpoint:
-                db.delete_push_subscription_by_endpoint(endpoint)
+        endpoint = sub_info.get("endpoint")
+        if code in (401, 403, 404, 410) and endpoint:
+            db.delete_push_subscription_by_endpoint(endpoint)
+        if code in (401, 403):
+            return (
+                False,
+                f"WebPush HTTP {code}: VAPID rejected — re-allow notifications in the installed PWA.",
+            )
         return False, f"WebPush HTTP {code}: {text or str(ex)}"
     except Exception as ex:
         return False, str(ex)[:200]
@@ -459,6 +553,7 @@ def send_web_push(
 
 def send_test_push_to_all() -> dict:
     """Send test push to every subscribed device (cron / ops)."""
+    purged = purge_stale_push_subscriptions()
     grouped = db.list_push_subscriptions_grouped_by_user()
     results = []
     sent = 0
@@ -485,14 +580,25 @@ def send_test_push_to_all() -> dict:
         "errors": errors,
         "users": len(grouped),
         "results": results,
+        "pushBackendVersion": PUSH_BACKEND_VERSION,
+        "staleSubscriptionsPurged": purged,
     }
     if last_error:
         out["lastError"] = last_error
+    if sent == 0 and not grouped:
+        out["hint"] = (
+            "No devices subscribed. Open the installed PWA, Profile → turn notifications on, Allow."
+        )
+    elif sent == 0 and purged > 0:
+        out["hint"] = (
+            "Stale subscriptions removed after VAPID key change. Re-enable notifications in the PWA, then test again."
+        )
     return out
 
 
 def send_test_push_to_user(user_id: int) -> dict:
     """Immediate test notification (ignores schedule and entry-today rules)."""
+    purged = purge_stale_push_subscriptions()
     grouped = db.list_push_subscriptions_grouped_by_user()
     subs = grouped.get(int(user_id)) or []
     if not subs:
@@ -509,12 +615,21 @@ def send_test_push_to_user(user_id: int) -> dict:
         if ok:
             sent += 1
         results.append({"ok": ok, "error": err})
-    return {
+    out = {
         "ok": sent > 0,
         "sent": sent,
         "devices": len(subs),
         "results": results,
+        "pushBackendVersion": PUSH_BACKEND_VERSION,
+        "staleSubscriptionsPurged": purged,
     }
+    if sent == 0 and purged > 0:
+        out["hint"] = (
+            "Stale subscriptions removed after VAPID key change. Turn notifications off and on in Profile."
+        )
+    elif sent == 0 and not subs:
+        out["hint"] = "No device subscribed. Turn notifications on in Profile and tap Allow."
+    return out
 
 
 def _should_fire_insight(state: dict, entry: dict, today_key: str) -> bool:
@@ -553,6 +668,7 @@ def dispatch_due_notifications() -> dict:
     if not push_configured():
         return {"ok": False, "error": "VAPID keys not configured", "sent": 0}
 
+    purged = purge_stale_push_subscriptions()
     grouped = db.list_push_subscriptions_grouped_by_user()
     now = _manila_now()
     today_key = _manila_date_key(now)
@@ -659,6 +775,8 @@ def dispatch_due_notifications() -> dict:
         "skippedEntryToday": skipped_entry_today,
         "manilaTime": f"{h:02d}:{m:02d}",
         "dateKey": today_key,
+        "pushBackendVersion": PUSH_BACKEND_VERSION,
+        "staleSubscriptionsPurged": purged,
     }
     if last_error:
         out["lastError"] = last_error

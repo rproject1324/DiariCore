@@ -2468,7 +2468,7 @@ def api_push_subscribe():
         return jsonify({"success": False, "error": "Invalid push subscription."}), 400
     if not push_service.push_configured():
         return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
-    if not db.upsert_push_subscription(user_id, sub):
+    if not db.upsert_push_subscription(user_id, sub, push_service.vapid_public_key()):
         return jsonify({"success": False, "error": "Could not save subscription."}), 500
     notif = data.get("notifications")
     if isinstance(notif, dict):

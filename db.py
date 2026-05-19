@@ -1930,13 +1930,19 @@ def merge_user_ui_preferences_json(user_id: int, patch: dict) -> bool:
         conn.close()
 
 
-def upsert_push_subscription(user_id: int, subscription: dict) -> bool:
+def upsert_push_subscription(
+    user_id: int, subscription: dict, vapid_public_key: str | None = None
+) -> bool:
     if not isinstance(user_id, int) or user_id <= 0 or not isinstance(subscription, dict):
         return False
     endpoint = str(subscription.get("endpoint") or "").strip()
     if not endpoint:
         return False
-    blob = json.dumps(subscription, separators=(",", ":"))
+    sub = dict(subscription)
+    vp = str(vapid_public_key or "").strip()
+    if vp:
+        sub["_vapidPublicKey"] = vp
+    blob = json.dumps(sub, separators=(",", ":"))
     conn = get_conn()
     cur = conn.cursor()
     try:
