@@ -450,11 +450,35 @@
         })();
     }
 
+    function removePwaFloatingSyncBadge() {
+        if (!isStandalone()) return;
+        document.querySelectorAll('.sync-status-badge').forEach(function (el) {
+            el.remove();
+        });
+    }
+
     if (isStandalone()) {
         document.documentElement.classList.add('diari-pwa-standalone');
         document.documentElement.setAttribute('data-diari-pwa', 'standalone');
+        removePwaFloatingSyncBadge();
         loadPwaNotificationStack();
     }
+
+    function onPwaShellReady() {
+        if (!isStandalone()) return;
+        removePwaFloatingSyncBadge();
+        if (typeof window.applyPwaProfilePersonalOfflineState === 'function') {
+            window.applyPwaProfilePersonalOfflineState();
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', onPwaShellReady);
+    } else {
+        onPwaShellReady();
+    }
+    window.addEventListener('offline', onPwaShellReady);
+    window.addEventListener('online', onPwaShellReady);
 
     function syncThemeColorMeta() {
         try {

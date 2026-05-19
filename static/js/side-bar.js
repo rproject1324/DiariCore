@@ -93,6 +93,38 @@ if (typeof window !== 'undefined') {
     }
 }
 
+function isDiariPwaShell() {
+    try {
+        if (window.DiariOffline?.isPwaUiContext?.()) return true;
+    } catch (_) {
+        /* ignore */
+    }
+    try {
+        if (window.DiariPWA?.isStandalone?.()) return true;
+    } catch (_) {
+        /* ignore */
+    }
+    const el = document.documentElement;
+    if (el?.classList.contains('diari-pwa-standalone')) return true;
+    if (el?.getAttribute('data-diari-pwa') === 'standalone') return true;
+    try {
+        if (window.matchMedia('(display-mode: standalone)').matches) return true;
+        if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+        if (window.matchMedia('(display-mode: minimal-ui)').matches) return true;
+    } catch (_) {
+        /* ignore */
+    }
+    if (window.navigator.standalone === true) return true;
+    return false;
+}
+
+function removePwaSyncStatusBadge() {
+    if (!isDiariPwaShell()) return;
+    document.querySelectorAll('.sync-status-badge').forEach(function (el) {
+        el.remove();
+    });
+}
+
 class SidebarComponent {
     constructor() {
         this.currentPage = this.getCurrentPage();
@@ -448,9 +480,13 @@ class SidebarComponent {
     }
 
     initSyncStatusBadge() {
-        if (window.DiariOffline?.isPwaUiContext?.()) {
-            const existing = document.querySelector('.sync-status-badge');
-            if (existing) existing.remove();
+        if (isDiariPwaShell()) {
+            removePwaSyncStatusBadge();
+            this.syncBadgeEl = null;
+            if (this.syncBadgePoller) {
+                clearInterval(this.syncBadgePoller);
+                this.syncBadgePoller = null;
+            }
             return;
         }
         if (document.querySelector('.sync-status-badge')) {
@@ -511,7 +547,11 @@ class SidebarComponent {
     }
 
     async refreshSyncStatusBadge() {
-        if (window.DiariOffline?.isPwaUiContext?.()) return;
+        if (isDiariPwaShell()) {
+            removePwaSyncStatusBadge();
+            this.syncBadgeEl = null;
+            return;
+        }
         if (!this.syncBadgeEl) return;
         const isOnline = navigator.onLine !== false;
         const pendingTags = this.readTagPendingCount();

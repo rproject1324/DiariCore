@@ -196,7 +196,15 @@
         return 'light';
     }
 
+    function markPwaStandaloneDocument() {
+        if (!isPwaStandalone()) return;
+        const root = g.document.documentElement;
+        root.classList.add('diari-pwa-standalone');
+        root.setAttribute('data-diari-pwa', 'standalone');
+    }
+
     function applyEarlyAppearance() {
+        markPwaStandaloneDocument();
         if (!isPwaStandalone()) return;
         if (isAuthPage()) {
             applyPaletteVars(PALETTES['theme-1'], false);
@@ -207,6 +215,7 @@
         applyPaletteVars(primary, resolveTheme() === 'dark');
     }
 
+    markPwaStandaloneDocument();
     applyEarlyAppearance();
     g.addEventListener('pageshow', function (ev) {
         if (ev.persisted) applyEarlyAppearance();

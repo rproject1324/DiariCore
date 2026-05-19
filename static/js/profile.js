@@ -133,7 +133,11 @@ const PROFILE_PERSONAL_OFFLINE_FIELD_IDS = [
 function applyPwaProfilePersonalOfflineState() {
     if (!isPwaProfileContext()) return;
     const panel = document.getElementById('profileSectionPersonalInfo');
-    const offline = isPwaOfflineForUserActionsSync();
+    const offline = navigator.onLine === false;
+    const root = document.documentElement;
+    if (root) {
+        root.classList.toggle('diari-pwa-offline', offline);
+    }
     if (panel) {
         panel.classList.toggle('pwa-profile-personal-offline', offline);
     }
@@ -153,6 +157,8 @@ function applyPwaProfilePersonalOfflineState() {
     });
     refreshProfilePersonalSaveButton();
 }
+
+window.applyPwaProfilePersonalOfflineState = applyPwaProfilePersonalOfflineState;
 
 function profilePersonalNicknameEmailChangedFromStored(user, nick, email) {
     if (!user) return true;

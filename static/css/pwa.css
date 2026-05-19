@@ -259,3 +259,61 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
     color: var(--text-dark, #e7eff2) !important;
     border-color: var(--border-color, #2f3b42);
 }
+
+/*
+ * PWA-only rules via display-mode (works even before diari-pwa-standalone class).
+ * Duplicates class-based rules above so installed app always picks up changes.
+ */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+    .sync-status-badge {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+        height: 0 !important;
+        width: 0 !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
+        padding-right: 4.25rem !important;
+        text-align: center;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
+        margin-right: 2rem !important;
+        margin-left: 0 !important;
+        transform: translateX(-14px) !important;
+        cursor: pointer;
+        opacity: 0.92;
+    }
+
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__input,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__select,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-btn,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-summary__change,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change {
+        opacity: 0.42 !important;
+        pointer-events: none !important;
+        cursor: not-allowed !important;
+        filter: grayscale(0.25) !important;
+        -webkit-text-fill-color: var(--text-muted, #8a9aa3) !important;
+    }
+
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-footer,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-summary,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary {
+        pointer-events: none !important;
+    }
+
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__input-wrap,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input-wrap {
+        opacity: 0.42 !important;
+    }
+}
