@@ -317,6 +317,15 @@
                                             <input type="time" id="profileReminderTimeInput" class="time-input" value="09:00" aria-label="Daily reminder time">
                                         </div>
                                     </div>
+                                    <div id="profilePushStatusPanel" class="profile-push-status" hidden>
+                                        <p class="profile-push-status__title">Reminder delivery (this phone)</p>
+                                        <p class="profile-push-status__hint">No computer needed — tap Refresh after changing your reminder time.</p>
+                                        <pre id="profilePushStatusText" class="profile-push-status__text" aria-live="polite">Loading…</pre>
+                                        <div class="profile-push-status__actions">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary profile-push-status__btn" id="profilePushStatusRefresh">Refresh status</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary profile-push-status__btn" id="profilePushResetDaily">Reset “sent today”</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </section>
                             </div>

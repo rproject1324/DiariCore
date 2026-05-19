@@ -2762,6 +2762,85 @@ function buildPushNotificationPrefsPayloadForServer() {
     };
 }
 
+function formatProfilePushStatusForPhone(data) {
+    if (!data || !data.success) {
+        return 'Could not load status. Check internet and try Refresh.';
+    }
+    const lines = [];
+    lines.push('Server time (Manila): ' + (data.manilaNow || '?'));
+    lines.push('Reminder server will use: ' + (data.reminderTimeUsed || '(not set)'));
+    lines.push('Your override saved: ' + (data.reminderTimeOverride || '(none — using default hour)'));
+    lines.push('Daily reminders on: ' + (data.dailyEnabled ? 'yes' : 'no'));
+    lines.push('Wrote entry today: ' + (data.hasEntryToday ? 'yes — no daily nudge today' : 'no'));
+    lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
+    lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
+    lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if (data.internalCronDisabled) {
+        lines.push('');
+        lines.push('⚠ Scheduler OFF on Railway (DISABLE_INTERNAL_PUSH_CRON).');
+        lines.push('Scheduled reminders will NOT fire until that is removed.');
+    } else {
+        lines.push('Scheduler on server: ' + (data.scheduledDispatchActive ? 'running' : 'not started yet'));
+        lines.push('Last server check: ' + (data.lastServerDispatchAt || '(none yet — wait 1–2 min)'));
+    }
+    if (data.needsCron && typeof data.needsCron === 'string') {
+        lines.push('');
+        lines.push(data.needsCron);
+    }
+    return lines.join('\n');
+}
+
+let profilePushStatusBound = false;
+
+async function refreshProfilePushStatusPanel() {
+    const panel = document.getElementById('profilePushStatusPanel');
+    const pre = document.getElementById('profilePushStatusText');
+    if (!panel || !pre) return;
+    if (!isPwaProfileContext()) {
+        panel.hidden = true;
+        return;
+    }
+    panel.hidden = false;
+    pre.textContent = 'Loading…';
+    try {
+        const res = await fetch('/api/push/schedule-status', { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        pre.textContent = formatProfilePushStatusForPhone(data);
+    } catch (e) {
+        pre.textContent = 'Network error: ' + (e && e.message ? e.message : 'try again');
+    }
+}
+
+function initializeProfilePushStatusPanel() {
+    const panel = document.getElementById('profilePushStatusPanel');
+    if (!panel || profilePushStatusBound) return;
+    profilePushStatusBound = true;
+    const refreshBtn = document.getElementById('profilePushStatusRefresh');
+    const resetBtn = document.getElementById('profilePushResetDaily');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function () {
+            void refreshProfilePushStatusPanel();
+        });
+    }
+    if (resetBtn) {
+        resetBtn.addEventListener('click', async function () {
+            resetBtn.disabled = true;
+            try {
+                await fetch('/api/push/reset-daily-reminder', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+                showNotification('Reset — you can test today’s reminder again.', 'info', 4000);
+            } catch (_) {
+                showNotification('Reset failed — check connection.', 'warning', 4000);
+            } finally {
+                resetBtn.disabled = false;
+                void refreshProfilePushStatusPanel();
+            }
+        });
+    }
+}
+
 async function syncPushNotificationPrefsToServerFromProfile() {
     try {
         const res = await fetch('/api/push/preferences', {
@@ -2803,6 +2882,7 @@ function initializeReminderTimePreference() {
             void window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }
         void syncPushNotificationPrefsToServerFromProfile();
+        void refreshProfilePushStatusPanel();
     }
     input.addEventListener('change', onReminderTimeChanged);
     input.addEventListener('input', onReminderTimeChanged);
@@ -3086,7 +3166,9 @@ function openProfileSection(sectionKey) {
         if (window.DiariPwaNotifications?.hydrateProfileNotificationUi) {
             window.DiariPwaNotifications.hydrateProfileNotificationUi();
         }
+        initializeProfilePushStatusPanel();
         void syncPushNotificationPrefsToServerFromProfile();
+        void refreshProfilePushStatusPanel();
     }
     if (sectionKey === 'personal-information') {
         hydratePersonalInfoPanel();
