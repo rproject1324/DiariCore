@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v8"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v9"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -506,6 +506,14 @@ def schedule_status_for_user(user_id: int) -> dict:
     state = _user_push_state(user_id)
     has_entry = _has_entry_today_manila(entries)
     hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
+    last_daily = state.get("lastDailyReminder")
+    if isinstance(last_daily, dict):
+        last_daily_out = {
+            "dateKey": last_daily.get("dateKey"),
+            "hhmm": last_daily.get("hhmm"),
+        }
+    else:
+        last_daily_out = None
     due_now = bool(
         not has_entry
         and prefs["dailyEnabled"]
@@ -532,6 +540,15 @@ def schedule_status_for_user(user_id: int) -> dict:
             _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
             if reminder
             else False
+        ),
+        "serverLastDailyReminder": last_daily_out,
+        "serverLegacyDailyDateKey": state.get("lastDailyReminderDateKey"),
+        "serverLegacyDailyHhmm": state.get("lastDailyReminderHhmm"),
+        "alreadySentHint": (
+            "Server marked this reminder time as sent today (at least one push subscription returned success). "
+            "Check every device signed into this account, OS notification history, and spam/blocked app notifications. "
+            "Chrome mobile emulation here does not receive Android pushes. "
+            "POST /api/push/reset-daily-reminder clears this flag for testing."
         ),
         "subscribedDevices": devices,
         "needsCron": (

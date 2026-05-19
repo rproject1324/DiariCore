@@ -2535,6 +2535,21 @@ def api_push_schedule_status():
     ), 200
 
 
+@app.route("/api/push/reset-daily-reminder", methods=["POST"])
+def api_push_reset_daily_reminder():
+    """Clear server-side 'already sent today' so the next window can fire again (testing / missed banner)."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    push_service.clear_daily_reminder_state(user_id)
+    return jsonify(
+        {
+            "success": True,
+            "schedule": push_service.schedule_status_for_user(user_id),
+        }
+    ), 200
+
+
 @app.route("/api/push/test", methods=["POST"])
 def api_push_test():
     """PWA: send one test push immediately (logged-in user)."""

@@ -1,8 +1,11 @@
 /**
  * DiariCore offline layer: cached entries, sync queues, local emotion analysis, auth guard.
  */
-(function (global) {
+(function () {
     'use strict';
+
+    /** IIFE must not rely on an outer `global` binding — pass window explicitly. */
+    const global = typeof window !== 'undefined' ? window : globalThis;
 
     const ENTRIES_KEY = 'diariCoreEntries';
     const ENTRIES_OWNER_KEY = 'diariCoreEntriesOwnerId';
@@ -45,7 +48,7 @@
             (global.document &&
                 global.document.documentElement.classList.contains('diari-pwa-standalone')) ||
             (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
-            global.navigator.standalone === true
+            (global.navigator && global.navigator.standalone === true)
         );
     }
 
@@ -249,7 +252,8 @@
 
     function ensurePwaDocumentMarkers() {
         if (!isPwaUiContext()) return;
-        const el = global.document.documentElement;
+        const el = global.document && global.document.documentElement;
+        if (!el) return;
         el.classList.add('diari-pwa-standalone');
         el.setAttribute('data-diari-pwa', 'standalone');
     }
