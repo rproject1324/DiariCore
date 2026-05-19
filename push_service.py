@@ -433,6 +433,8 @@ def send_web_push(
     payload = json.dumps({"title": title, "body": body, "url": url})
     try:
         pem = vapid.private_pem()
+        if isinstance(pem, bytes):
+            pem = pem.decode()
         webpush(
             subscription_info=subscription,
             data=payload,
