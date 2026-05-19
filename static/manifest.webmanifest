@@ -28,7 +28,7 @@
       "purpose": "any"
     },
     {
-      "src": "/diariclogo-maskable.png",
+      "src": "/diariclogo.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
