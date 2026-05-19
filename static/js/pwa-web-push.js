@@ -60,13 +60,18 @@
 
         const publicKey = await fetchVapidPublicKey();
         const reg = await navigator.serviceWorker.ready;
-        let sub = await reg.pushManager.getSubscription();
-        if (!sub) {
-            sub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(publicKey),
-            });
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+            try {
+                await existing.unsubscribe();
+            } catch (_) {
+                /* ignore */
+            }
         }
+        const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
 
         const body = {
             subscription: sub.toJSON(),
@@ -90,6 +95,16 @@
         }
         global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
         return true;
+    }
+
+    async function sendTestPush() {
+        if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
+        const res = await fetch('/api/push/test', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        return res.json().catch(() => ({}));
     }
 
     async function syncNotificationPrefsToServer() {
@@ -119,6 +134,7 @@
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
+        sendTestPush,
         syncNotificationPrefsToServer,
         buildNotificationPrefsPayload,
     };

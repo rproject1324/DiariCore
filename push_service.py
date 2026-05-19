@@ -36,7 +36,44 @@ def vapid_public_key() -> str | None:
 
 
 def vapid_private_key() -> str | None:
-    return (os.environ.get("VAPID_PRIVATE_KEY") or "").strip() or None
+    return _normalized_vapid_private_key()
+
+
+def _normalized_vapid_private_key() -> str | None:
+    """
+    pywebpush needs PEM or a path. Railway env often has either PEM (with \\n) or
+    legacy 32-byte base64 from scripts/generate_vapid_keys.py — convert the latter.
+    """
+    raw = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
+    if not raw:
+        return None
+    if "\\n" in raw:
+        raw = raw.replace("\\n", "\n")
+    if "BEGIN" in raw and "PRIVATE KEY" in raw:
+        return raw
+    try:
+        import base64
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        pad = "=" * ((4 - len(raw) % 4) % 4)
+        key_bytes = base64.urlsafe_b64decode(raw + pad)
+        private_key = None
+        if len(key_bytes) == 32:
+            private_key = ec.derive_private_key(
+                int.from_bytes(key_bytes, "big"), ec.SECP256R1()
+            )
+        elif len(key_bytes) == 65 and key_bytes[0] == 0x04:
+            return None
+        if private_key is not None:
+            return private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            ).decode()
+    except Exception:
+        pass
+    return raw
 
 
 def vapid_claim_email() -> str:
@@ -263,32 +300,69 @@ def _build_insight_body(entry: dict) -> str:
     )
 
 
-def send_web_push(subscription: dict, title: str, body: str, url: str = "/write-entry.html") -> bool:
+def send_web_push(
+    subscription: dict, title: str, body: str, url: str = "/write-entry.html"
+) -> tuple[bool, str | None]:
+    """Returns (ok, error_message)."""
     if not push_configured():
-        return False
+        return False, "VAPID not configured"
+    private = vapid_private_key()
+    if not private or "BEGIN" not in private:
+        return False, "VAPID_PRIVATE_KEY must be PEM (re-run scripts/generate_vapid_keys.py)"
     try:
         from pywebpush import WebPushException, webpush
     except ImportError:
-        return False
+        return False, "pywebpush not installed on server"
     payload = json.dumps({"title": title, "body": body, "url": url})
     try:
         webpush(
             subscription_info=subscription,
             data=payload,
-            vapid_private_key=vapid_private_key(),
+            vapid_private_key=private,
             vapid_claims={"sub": vapid_claim_email()},
         )
-        return True
+        return True, None
     except WebPushException as ex:
         status = getattr(ex, "response", None)
         code = getattr(status, "status_code", None) if status else None
+        text = ""
+        try:
+            text = (status.text or "")[:200] if status is not None else ""
+        except Exception:
+            pass
         if code in (404, 410):
             endpoint = subscription.get("endpoint")
             if endpoint:
                 db.delete_push_subscription_by_endpoint(endpoint)
-        return False
-    except Exception:
-        return False
+        return False, f"WebPush HTTP {code}: {text or str(ex)}"
+    except Exception as ex:
+        return False, str(ex)[:200]
+
+
+def send_test_push_to_user(user_id: int) -> dict:
+    """Immediate test notification (ignores schedule and entry-today rules)."""
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    subs = grouped.get(int(user_id)) or []
+    if not subs:
+        return {"ok": False, "error": "No push subscription for this account. Allow notifications in the installed PWA."}
+    results = []
+    sent = 0
+    for sub in subs:
+        ok, err = send_web_push(
+            sub,
+            "DiariCore test",
+            "If you see this, true push is working — even when the app is closed.",
+            "/dashboard.html",
+        )
+        if ok:
+            sent += 1
+        results.append({"ok": ok, "error": err})
+    return {
+        "ok": sent > 0,
+        "sent": sent,
+        "devices": len(subs),
+        "results": results,
+    }
 
 
 def _should_fire_insight(state: dict, entry: dict, today_key: str) -> bool:
@@ -333,6 +407,8 @@ def dispatch_due_notifications() -> dict:
     h, m = _manila_hm(now)
     sent = 0
     errors = 0
+    last_error = None
+    skipped_entry_today = 0
 
     for user_id, subs in grouped.items():
         if not subs:
@@ -343,6 +419,7 @@ def dispatch_due_notifications() -> dict:
         state_dirty = False
 
         if _has_entry_today_manila(entries):
+            skipped_entry_today += 1
             continue
 
         reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
@@ -350,14 +427,17 @@ def dispatch_due_notifications() -> dict:
         )
 
         def _push_all(title: str, body: str, url: str) -> bool:
-            nonlocal sent, errors
+            nonlocal sent, errors, last_error
             ok_any = False
             for sub in subs:
-                if send_web_push(sub, title, body, url):
+                ok, err = send_web_push(sub, title, body, url)
+                if ok:
                     sent += 1
                     ok_any = True
                 else:
                     errors += 1
+                    if err:
+                        last_error = err
             return ok_any
 
         if (
@@ -417,4 +497,15 @@ def dispatch_due_notifications() -> dict:
         if state_dirty:
             _save_push_state(user_id, state)
 
-    return {"ok": True, "sent": sent, "errors": errors, "users": len(grouped)}
+    out = {
+        "ok": True,
+        "sent": sent,
+        "errors": errors,
+        "users": len(grouped),
+        "skippedEntryToday": skipped_entry_today,
+        "manilaTime": f"{h:02d}:{m:02d}",
+        "dateKey": today_key,
+    }
+    if last_error:
+        out["lastError"] = last_error
+    return out

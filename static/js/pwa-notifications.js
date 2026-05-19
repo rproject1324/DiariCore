@@ -224,6 +224,14 @@
                 if (global.DiariPwaNotifications?.stopScheduler) {
                     global.DiariPwaNotifications.stopScheduler();
                 }
+                if (global.DiariPwaWebPush?.sendTestPush) {
+                    const test = await global.DiariPwaWebPush.sendTestPush();
+                    if (test && test.ok) {
+                        console.info('[DiariPwa] Test push sent.');
+                    } else if (test && test.results) {
+                        console.warn('[DiariPwa] Test push failed:', test);
+                    }
+                }
             } catch (e) {
                 console.warn('[DiariPwaNotifications] Web Push subscribe failed:', e);
             }

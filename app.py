@@ -2555,6 +2555,19 @@ def api_push_preferences():
     return jsonify({"success": True}), 200
 
 
+@app.route("/api/push/test", methods=["POST"])
+def api_push_test():
+    """PWA: send one test push immediately (logged-in user)."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    if not push_service.push_configured():
+        return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
+    result = push_service.send_test_push_to_user(user_id)
+    status = 200 if result.get("ok") else 502
+    return jsonify({"success": result.get("ok"), **result}), status
+
+
 @app.route("/api/internal/push/dispatch", methods=["POST"])
 def api_internal_push_dispatch():
     """
