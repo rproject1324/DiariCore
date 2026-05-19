@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v7"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v8"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -506,13 +506,8 @@ def schedule_status_for_user(user_id: int) -> dict:
     state = _user_push_state(user_id)
     has_entry = _has_entry_today_manila(entries)
     hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
-    due_now = bool(
-        not has_entry
-        and prefs["dailyEnabled"]
-        and reminder
-        and _reminder_due_in_window(h, m, reminder)
-        and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
-    )
+    why = _why_not_daily_due(prefs, entries, state, reminder, h, m, _manila_date_key(now))
+    due_now = why == "due_now"
     grouped = db.list_push_subscriptions_grouped_by_user()
     devices = len(grouped.get(int(user_id)) or [])
     return {
@@ -524,19 +519,20 @@ def schedule_status_for_user(user_id: int) -> dict:
             "override" if _parse_hhmm(prefs["reminderTimeOverride"]) else "most_active_hour"
         ),
         "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
-        "internalCronRequired": False,
         "dailyEnabled": prefs["dailyEnabled"],
         "hasEntryToday": has_entry,
         "dailyDueNow": due_now,
+        "whyNotDueNow": why,
         "dailyAlreadySentToday": (
             _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
             if reminder
             else False
         ),
         "subscribedDevices": devices,
-        "needsCron": (
-            "Server runs internal dispatch every 60s when deployed. "
-            "Optional: cron-job.org POST /api/internal/push/dispatch each minute."
+        "help": (
+            "If whyNotDueNow starts with outside_window_, wait until reminderTimeUsed "
+            f"(fires for {DISPATCH_WINDOW_MINUTES} min). If no_reminder_time_on_server, "
+            "open PWA Profile, set Reminder Time, wait 3s before closing app."
         ),
     }
 
@@ -709,6 +705,39 @@ def send_test_push_to_all() -> dict:
     return out
 
 
+def send_daily_reminder_to_user(user_id: int) -> dict:
+    """Send daily nudge now (ignores time window; respects has_entry_today)."""
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    subs = grouped.get(int(user_id)) or []
+    if not subs:
+        return {"ok": False, "error": "No push subscription. Allow notifications in the PWA."}
+    entries = _serialize_entries_for_user(user_id)
+    prefs = _user_notification_prefs(user_id)
+    if not prefs["dailyEnabled"]:
+        return {"ok": False, "error": "Daily reminders are disabled."}
+    if _has_entry_today_manila(entries):
+        return {"ok": False, "error": "You already wrote today — daily reminder skipped."}
+    sent = 0
+    results = []
+    for sub in subs:
+        ok, err = send_web_push(
+            sub,
+            "A gentle journal nudge",
+            _build_daily_body(),
+            "/write-entry.html",
+        )
+        results.append({"ok": ok, "error": err})
+        if ok:
+            sent += 1
+    if sent > 0:
+        state = dict(_user_push_state(user_id))
+        reminder = _resolve_reminder_hhmm(prefs, entries)
+        if reminder:
+            _mark_daily_reminder_sent(state, _manila_date_key(), reminder)
+            _save_push_state(user_id, state)
+    return {"ok": sent > 0, "sent": sent, "results": results}
+
+
 def send_test_push_to_user(user_id: int) -> dict:
     """Immediate test notification (ignores schedule and entry-today rules)."""
     purged = purge_stale_push_subscriptions()
@@ -792,6 +821,7 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
     skipped_entry_today = 0
     daily_due_users = 0
     user_debug: list[dict] = []
+    user_summary: list[dict] = []
 
     for user_id, subs in grouped.items():
         if not subs:
@@ -911,6 +941,7 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         "staleSubscriptionsPurged": purged,
         "dailyDueUsers": daily_due_users,
         "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
+        "userSummary": user_summary,
     }
     if debug:
         out["userDebug"] = user_debug
