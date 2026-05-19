@@ -87,6 +87,35 @@ def _b64_private_to_pem(raw: str) -> str | None:
 _vapid_instance = None
 
 
+def _normalize_private_pem(raw: str) -> str | None:
+    """Turn Railway env values into a PEM string cryptography can load."""
+    s = (raw or "").strip().strip('"').strip("'")
+    if not s:
+        return None
+    for rep in ("\\\\n", "\\n"):
+        if rep in s:
+            s = s.replace(rep, "\n")
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    if "BEGIN" in s:
+        if not s.endswith("\n"):
+            s += "\n"
+        return s
+    compact = re.sub(r"\s+", "", s)
+    if compact and len(compact) > 40:
+        wrapped = "\n".join(compact[i : i + 64] for i in range(0, len(compact), 64))
+        return f"-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----\n"
+    pem = _b64_private_to_pem(s)
+    return pem
+
+
+def _vapid_from_pem(pem: str):
+    from cryptography.hazmat.primitives import serialization
+    from py_vapid import Vapid01
+
+    key = serialization.load_pem_private_key(pem.encode(), password=None)
+    return Vapid01(private_key=key)
+
+
 def _get_vapid():
     """Load VAPID signing key once (PEM or legacy base64 private on Railway)."""
     global _vapid_instance
@@ -94,7 +123,6 @@ def _get_vapid():
         return _vapid_instance
 
     raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
-    raw_pub = vapid_public_key()
     if not raw_priv:
         return None
 
@@ -103,30 +131,22 @@ def _get_vapid():
     except ImportError:
         return None
 
-    v = Vapid01()
-    try:
-        if "BEGIN" in raw_priv:
-            pem = raw_priv.replace("\\n", "\n")
-            v.from_pem(pem.encode() if isinstance(pem, str) else pem)
-        else:
-            try:
-                v.from_string(private_key=raw_priv, public_key=raw_pub or None)
-            except Exception:
-                pem = _b64_private_to_pem(raw_priv)
-                if not pem:
-                    return None
-                v.from_pem(pem.encode())
-        _vapid_instance = v
-        return v
-    except Exception:
-        pem = _b64_private_to_pem(raw_priv)
-        if pem:
-            try:
-                v.from_pem(pem.encode())
-                _vapid_instance = v
-                return v
-            except Exception:
-                pass
+    pem = _normalize_private_pem(raw_priv)
+    loaders = []
+    if pem:
+        loaders.append(lambda p=pem: _vapid_from_pem(p))
+        loaders.append(lambda p=pem: Vapid01.from_pem(p.encode()))
+    if "BEGIN" not in raw_priv:
+        loaders.append(lambda r=raw_priv: Vapid01.from_string(r))
+
+    for loader in loaders:
+        try:
+            v = loader()
+            _ = v.private_key
+            _vapid_instance = v
+            return v
+        except Exception:
+            continue
     return None
 
 
@@ -138,8 +158,8 @@ def push_health() -> dict:
     pem_ok = False
     if v:
         try:
-            pem = v.private_pem()
-            pem_ok = bool(pem and (b"BEGIN" in pem if isinstance(pem, bytes) else "BEGIN" in str(pem)))
+            _ = v.private_key
+            pem_ok = True
         except Exception:
             pem_ok = False
     try:

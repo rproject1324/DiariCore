@@ -12,9 +12,9 @@ DiariCore uses **Web Push + VAPID** (not Firebase). This is the standard free ap
 
 1. Install deps locally: `py -m pip install pywebpush`
 2. Generate keys: `py scripts/generate_vapid_keys.py`
-3. Add to Railway variables:
-   - `VAPID_PUBLIC_KEY` (short base64 string)
-   - `VAPID_PRIVATE_KEY` (**full PEM**, including `-----BEGIN PRIVATE KEY-----` — or one line with `\n`)
+3. Add to Railway variables (from the **same** `generate_vapid_keys.py` run):
+   - `VAPID_PUBLIC_KEY` (short `B...` string)
+   - `VAPID_PRIVATE_KEY` — **easiest:** paste the long one-line **body only** (no `BEGIN`/`END` lines). Also works: full PEM or one line with `\n`.
    - `VAPID_CLAIM_EMAIL` (e.g. `mailto:you@example.com`)
    - `PUSH_CRON_SECRET` (random string)
 4. After deploy: in the **installed PWA**, allow notifications — a **test push** is sent automatically. Or while logged in, `POST /api/push/test`.
