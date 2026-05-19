@@ -2446,56 +2446,6 @@ def pwa_service_worker():
     return resp
 
 
-@app.route("/<path:filename>")
-def static_files(filename):
-    if filename.startswith("api/"):
-        abort(404)
-    if filename == "admin.html" and not session.get("is_admin"):
-        abort(403)
-
-    safe = os.path.normpath(filename)
-    if ".." in safe or safe.startswith(os.sep):
-        abort(404)
-
-    ext = os.path.splitext(safe)[1].lower()
-    template_exts = {".html"}
-    static_dir_map = {
-        ".css": "css",
-        ".js": "js",
-        ".json": "img",
-        ".woff": "css",
-        ".woff2": "css",
-        ".ttf": "css",
-        ".eot": "css",
-        ".png": "img",
-        ".jpg": "img",
-        ".jpeg": "img",
-        ".gif": "img",
-        ".webp": "img",
-        ".svg": "img",
-        ".ico": "img",
-    }
-
-    if ext in template_exts:
-        full = os.path.join(TEMPLATES_DIR, safe)
-        if os.path.abspath(full).startswith(os.path.abspath(TEMPLATES_DIR)) and os.path.isfile(full):
-            return send_from_directory(TEMPLATES_DIR, safe)
-        abort(404)
-
-    subdir = static_dir_map.get(ext)
-    if subdir:
-        full = os.path.join(STATIC_DIR, subdir, safe)
-        static_base = os.path.join(STATIC_DIR, subdir)
-        if os.path.abspath(full).startswith(os.path.abspath(static_base)) and os.path.isfile(full):
-            return send_from_directory(static_base, safe)
-
-    # Fallback for remaining root-level files that are intentionally kept.
-    full = os.path.join(BASE_DIR, safe)
-    if os.path.abspath(full).startswith(os.path.abspath(BASE_DIR)) and os.path.isfile(full):
-        return send_from_directory(BASE_DIR, safe)
-    abort(404)
-
-
 @app.route("/api/push/vapid-public-key", methods=["GET"])
 def api_push_vapid_public_key():
     """PWA Web Push: public VAPID key for PushManager.subscribe."""
@@ -2568,20 +2518,93 @@ def api_push_test():
     return jsonify({"success": result.get("ok"), **result}), status
 
 
+def _require_push_cron_secret():
+    secret = (os.environ.get("PUSH_CRON_SECRET") or "").strip()
+    if not secret:
+        return None, (jsonify({"success": False, "error": "PUSH_CRON_SECRET not set."}), 503)
+    provided = (request.headers.get("X-Push-Cron-Secret") or "").strip()
+    if provided != secret:
+        abort(403)
+    return secret, None
+
+
+@app.route("/api/internal/push/test", methods=["POST"])
+def api_internal_push_test():
+    """
+    Send test push to ALL subscribed devices immediately (PowerShell / cron ops).
+    Header: X-Push-Cron-Secret
+    """
+    _, err = _require_push_cron_secret()
+    if err:
+        return err
+    if not push_service.push_configured():
+        return jsonify({"success": False, "error": "Web Push is not configured."}), 503
+    result = push_service.send_test_push_to_all()
+    status = 200 if result.get("ok") else 502
+    return jsonify({"success": result.get("ok"), **result}), status
+
+
 @app.route("/api/internal/push/dispatch", methods=["POST"])
 def api_internal_push_dispatch():
     """
     Cron endpoint: send due Web Push notifications (true push when app is closed).
     Header: X-Push-Cron-Secret must match PUSH_CRON_SECRET.
     """
-    secret = (os.environ.get("PUSH_CRON_SECRET") or "").strip()
-    if not secret:
-        return jsonify({"success": False, "error": "PUSH_CRON_SECRET not set."}), 503
-    provided = (request.headers.get("X-Push-Cron-Secret") or "").strip()
-    if provided != secret:
-        abort(403)
+    _, err = _require_push_cron_secret()
+    if err:
+        return err
     result = push_service.dispatch_due_notifications()
     return jsonify({"success": True, **result}), 200
+
+
+@app.route("/<path:filename>")
+def static_files(filename):
+    if filename.startswith("api/"):
+        abort(404)
+    if filename == "admin.html" and not session.get("is_admin"):
+        abort(403)
+
+    safe = os.path.normpath(filename)
+    if ".." in safe or safe.startswith(os.sep):
+        abort(404)
+
+    ext = os.path.splitext(safe)[1].lower()
+    template_exts = {".html"}
+    static_dir_map = {
+        ".css": "css",
+        ".js": "js",
+        ".json": "img",
+        ".woff": "css",
+        ".woff2": "css",
+        ".ttf": "css",
+        ".eot": "css",
+        ".png": "img",
+        ".jpg": "img",
+        ".jpeg": "img",
+        ".gif": "img",
+        ".webp": "img",
+        ".svg": "img",
+        ".ico": "img",
+    }
+
+    if ext in template_exts:
+        full = os.path.join(TEMPLATES_DIR, safe)
+        if os.path.abspath(full).startswith(os.path.abspath(TEMPLATES_DIR)) and os.path.isfile(full):
+            return send_from_directory(TEMPLATES_DIR, safe)
+        abort(404)
+
+    subdir = static_dir_map.get(ext)
+    if subdir:
+        full = os.path.join(STATIC_DIR, subdir, safe)
+        static_base = os.path.join(STATIC_DIR, subdir)
+        if os.path.abspath(full).startswith(os.path.abspath(static_base)) and os.path.isfile(full):
+            return send_from_directory(static_base, safe)
+
+    # Fallback for remaining root-level files that are intentionally kept.
+    full = os.path.join(BASE_DIR, safe)
+    if os.path.abspath(full).startswith(os.path.abspath(BASE_DIR)) and os.path.isfile(full):
+        return send_from_directory(BASE_DIR, safe)
+    abort(404)
 
 
 if __name__ == "__main__":

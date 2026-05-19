@@ -339,6 +339,40 @@ def send_web_push(
         return False, str(ex)[:200]
 
 
+def send_test_push_to_all() -> dict:
+    """Send test push to every subscribed device (cron / ops)."""
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    results = []
+    sent = 0
+    errors = 0
+    last_error = None
+    for user_id, subs in grouped.items():
+        for sub in subs:
+            ok, err = send_web_push(
+                sub,
+                "DiariCore test",
+                "If you see this, true push is working — even when the app is closed.",
+                "/dashboard.html",
+            )
+            results.append({"userId": user_id, "ok": ok, "error": err})
+            if ok:
+                sent += 1
+            else:
+                errors += 1
+                if err:
+                    last_error = err
+    out = {
+        "ok": sent > 0,
+        "sent": sent,
+        "errors": errors,
+        "users": len(grouped),
+        "results": results,
+    }
+    if last_error:
+        out["lastError"] = last_error
+    return out
+
+
 def send_test_push_to_user(user_id: int) -> dict:
     """Immediate test notification (ignores schedule and entry-today rules)."""
     grouped = db.list_push_subscriptions_grouped_by_user()
