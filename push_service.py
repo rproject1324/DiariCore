@@ -511,10 +511,22 @@ def send_daily_test_push_to_user(user_id: int) -> dict:
         "/write-entry.html",
         tag="diari-daily-reminder",
     )
+    needs_resubscribe = bool(
+        err
+        and any(
+            k in err.lower()
+            for k in ("expired", "unsubscribed", "use this phone only", "no push subscription")
+        )
+    )
     return {
         "ok": ok,
         "error": err,
-        "hint": "Close the app completely, then wait a few seconds for the banner.",
+        "needsResubscribe": needs_resubscribe,
+        "hint": (
+            "Tap “Use this phone only” to refresh this device, then try again with the app closed."
+            if needs_resubscribe
+            else "Close the app completely, then wait a few seconds for the banner."
+        ),
     }
 
 
@@ -759,19 +771,32 @@ def send_web_push(
             text = (status.text or "")[:200] if status is not None else ""
         except Exception:
             pass
+        msg = (text or str(ex) or "").strip()
         endpoint = sub_info.get("endpoint")
-        if code in (401, 403, 404, 410) and endpoint:
+        dead_sub = code in (404, 410) or any(
+            k in msg.lower() for k in ("expired", "unsubscribed", "not registered")
+        )
+        if dead_sub and endpoint:
             db.delete_push_subscription_by_endpoint(endpoint)
         if code in (401, 403):
             return (
                 False,
-                f"WebPush HTTP {code}: VAPID rejected — re-allow notifications in the installed PWA.",
+                f"WebPush HTTP {code}: VAPID rejected — tap Use this phone only in Profile.",
+            )
+        if dead_sub:
+            print(
+                f"[diari-push-send] FAIL tag={tag} target={ep_hint} expired subscription removed",
+                flush=True,
+            )
+            return (
+                False,
+                "Push registration on this phone expired. Tap “Use this phone only”, then try again.",
             )
         print(
-            f"[diari-push-send] FAIL tag={tag} target={ep_hint} code={code} {text or ex}",
+            f"[diari-push-send] FAIL tag={tag} target={ep_hint} code={code} {msg}",
             flush=True,
         )
-        return False, f"WebPush HTTP {code}: {text or str(ex)}"
+        return False, f"WebPush failed ({code or 'error'}): {msg[:160]}"
     except Exception as ex:
         print(f"[diari-push-send] FAIL tag={tag} target={ep_hint} {ex}", flush=True)
         return False, str(ex)[:200]

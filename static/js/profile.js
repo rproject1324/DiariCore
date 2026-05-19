@@ -2847,11 +2847,25 @@ function initializeProfilePushStatusPanel() {
         dailyTestBtn.addEventListener('click', async function () {
             dailyTestBtn.disabled = true;
             try {
-                const res = await fetch('/api/push/send-daily-test', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                });
-                const data = await res.json().catch(() => ({}));
+                async function sendDailyTest() {
+                    const res = await fetch('/api/push/send-daily-test', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                    });
+                    return res.json().catch(() => ({}));
+                }
+                let data = await sendDailyTest();
+                if (
+                    !data.ok &&
+                    (data.needsResubscribe ||
+                        /expired|unsubscribed|use this phone only/i.test(String(data.error || '')))
+                ) {
+                    if (window.DiariPwaWebPush?.confirmPushOnThisPhone) {
+                        showNotification('Refreshing push registration on this phone…', 'info', 3000);
+                        await window.DiariPwaWebPush.confirmPushOnThisPhone();
+                        data = await sendDailyTest();
+                    }
+                }
                 if (data.ok) {
                     showNotification(
                         'Daily nudge sent — fully close the app and watch for the banner.',
@@ -2859,7 +2873,11 @@ function initializeProfilePushStatusPanel() {
                         7000
                     );
                 } else {
-                    showNotification(data.error || 'Daily test send failed.', 'warning', 5000);
+                    showNotification(
+                        data.hint || data.error || 'Daily test send failed.',
+                        'warning',
+                        7000
+                    );
                 }
             } catch (_) {
                 showNotification('Daily test send failed.', 'warning', 5000);
