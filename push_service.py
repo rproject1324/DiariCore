@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v9"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v10"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -523,6 +523,9 @@ def schedule_status_for_user(user_id: int) -> dict:
     )
     grouped = db.list_push_subscriptions_grouped_by_user()
     devices = len(grouped.get(int(user_id)) or [])
+    sched = push_scheduler_health()
+    internal_off = bool(sched.get("internalCronDisabled"))
+    last_dispatch = sched.get("lastDispatchAt")
     return {
         "manilaNow": f"{h:02d}:{m:02d}",
         "dateKey": _manila_date_key(now),
@@ -551,9 +554,19 @@ def schedule_status_for_user(user_id: int) -> dict:
             "POST /api/push/reset-daily-reminder clears this flag for testing."
         ),
         "subscribedDevices": devices,
+        "internalCronDisabled": internal_off,
+        "schedulerStarted": sched.get("schedulerStarted"),
+        "lastServerDispatchAt": last_dispatch,
+        "scheduledDispatchActive": sched.get("scheduledDispatchActive"),
         "needsCron": (
-            "Server runs internal dispatch every 60s when deployed. "
-            "Optional: cron-job.org POST /api/internal/push/dispatch each minute."
+            "DISABLE_INTERNAL_PUSH_CRON is on — scheduled reminders will NOT run until you "
+            "remove that Railway variable or add an external cron that POSTs "
+            "/api/internal/push/dispatch every minute with header X-Push-Cron-Secret."
+            if internal_off
+            else (
+                "Server should dispatch every 60s automatically. If lastServerDispatchAt stays "
+                "empty for several minutes, check Railway logs for [diari-push-cron]."
+            )
         ),
     }
 
@@ -915,6 +928,9 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
 
         if state_dirty:
             _save_push_state(user_id, state)
+
+        if debug:
+            user_debug.append(dbg)
 
     out = {
         "ok": True,

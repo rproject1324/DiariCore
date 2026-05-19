@@ -42,8 +42,17 @@ function parseHHmm(s) {
     return { h: Number(m[1]), m: Number(m[2]) };
 }
 
+const REMINDER_WINDOW_MINUTES = 15;
+
 function isSameMinute(nowH, nowM, targetH, targetM) {
     return nowH === targetH && nowM === targetM;
+}
+
+function isInReminderWindow(nowH, nowM, targetH, targetM, windowMinutes) {
+    const w = Math.max(1, windowMinutes || REMINDER_WINDOW_MINUTES);
+    const now = nowH * 60 + nowM;
+    const start = targetH * 60 + targetM;
+    return now >= start && now < start + w;
 }
 
 function entryDayKeyManila(iso) {
@@ -164,7 +173,7 @@ async function runNotificationChecks() {
     if (
         prefs.dailyRemindersEnabled &&
         reminder &&
-        isSameMinute(h, m, reminder.h, reminder.m) &&
+        isInReminderWindow(h, m, reminder.h, reminder.m, REMINDER_WINDOW_MINUTES) &&
         prefs.lastDailyReminderDateKey !== todayKey &&
         !hasEntryToday(entries)
     ) {

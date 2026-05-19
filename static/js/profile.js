@@ -2784,13 +2784,13 @@ function initializeReminderTimePreference() {
     if (!input || input.dataset.reminderTimeBound === '1') return;
     input.dataset.reminderTimeBound = '1';
     hydrateProfileReminderTimeInput();
-    input.addEventListener('change', function () {
+    function onReminderTimeChanged() {
         const suggested = computeSuggestedReminderTimeHHmm();
         try {
-            if (this.value === suggested) {
+            if (input.value === suggested) {
                 localStorage.removeItem(REMINDER_TIME_USER_OVERRIDE_KEY);
-            } else {
-                localStorage.setItem(REMINDER_TIME_USER_OVERRIDE_KEY, this.value);
+            } else if (input.value && /^\d{2}:\d{2}$/.test(input.value)) {
+                localStorage.setItem(REMINDER_TIME_USER_OVERRIDE_KEY, input.value);
             }
         } catch (_) { /* ignore */ }
         if (window.DiariPwaNotifications?.syncPrefsToWorker) {
@@ -2803,7 +2803,9 @@ function initializeReminderTimePreference() {
             void window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }
         void syncPushNotificationPrefsToServerFromProfile();
-    });
+    }
+    input.addEventListener('change', onReminderTimeChanged);
+    input.addEventListener('input', onReminderTimeChanged);
 }
 
 // Initialize Preference Toggles

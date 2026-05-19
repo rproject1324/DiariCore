@@ -14,12 +14,25 @@ _last_dispatch_summary: dict | None = None
 _worker_pid: int | None = None
 
 
+def _internal_cron_disabled() -> bool:
+    return os.environ.get("DISABLE_INTERNAL_PUSH_CRON", "").lower() in ("1", "true", "yes")
+
+
 def status() -> dict:
+    disabled = _internal_cron_disabled()
     return {
         "schedulerStarted": bool(_started_workers),
+        "internalCronDisabled": disabled,
+        "scheduledDispatchActive": bool(_started_workers) and not disabled,
         "workerPids": sorted(_started_workers),
         "lastDispatchAt": _last_dispatch_at,
         "lastDispatch": _last_dispatch_summary,
+        "hint": (
+            "Scheduled reminders need dispatch every minute. Remove DISABLE_INTERNAL_PUSH_CRON "
+            "on Railway, or POST /api/internal/push/dispatch each minute with X-Push-Cron-Secret."
+            if disabled
+            else None
+        ),
     }
 
 
@@ -30,7 +43,12 @@ def start(worker_id: int | None = None) -> None:
     with _started_lock:
         if wid in _started_workers:
             return
-        if os.environ.get("DISABLE_INTERNAL_PUSH_CRON", "").lower() in ("1", "true", "yes"):
+        if _internal_cron_disabled():
+            print(
+                "[diari-push-cron] DISABLED — set DISABLE_INTERNAL_PUSH_CRON=0 or unset it, "
+                "or call POST /api/internal/push/dispatch every minute (X-Push-Cron-Secret).",
+                flush=True,
+            )
             return
         if not (os.environ.get("VAPID_PUBLIC_KEY") or "").strip():
             return

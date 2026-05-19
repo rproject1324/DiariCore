@@ -380,7 +380,10 @@
             ) {
                 try {
                     await global.DiariPwaWebPush.subscribeWebPush();
-                    if (global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
+                    const needsTest =
+                        global.DiariPwaWebPush?.isWebPushActive &&
+                        !global.DiariPwaWebPush.isWebPushActive();
+                    if (needsTest && global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
                         await global.DiariPwaWebPush.confirmWebPushWithServerTest();
                     }
                 } catch (_) {
