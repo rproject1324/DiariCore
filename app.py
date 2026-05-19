@@ -2451,8 +2451,7 @@ def pwa_service_worker():
 def api_push_vapid_public_key():
     """PWA Web Push: public VAPID key for PushManager.subscribe."""
     key = push_service.vapid_public_key()
-    health = push_service.push_health()
-    health.update(push_service.push_scheduler_health())
+    health = push_service.push_health_client()
     if not key:
         return jsonify({"success": False, "error": "Web Push is not configured on this server.", **health}), 503
     return jsonify({"success": True, "publicKey": key, **health}), 200

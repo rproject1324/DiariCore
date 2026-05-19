@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v9"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v10"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "60"))
 )
@@ -227,8 +227,8 @@ def purge_stale_push_subscriptions() -> int:
     return removed
 
 
-def push_health() -> dict:
-    """Diagnostics for Railway / support (no secrets)."""
+def _push_health_crypto_core() -> dict:
+    """VAPID + library checks only — no DB subscription scans (safe for hot paths)."""
     pub = vapid_public_key()
     raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
     v = _get_vapid()
@@ -247,7 +247,6 @@ def push_health() -> dict:
         pywebpush_ok = True
     except ImportError:
         pywebpush_ok = False
-    subs = db.list_push_subscriptions_grouped_by_user()
     private_key_set = bool(raw_priv)
     if not private_key_set:
         private_key_status = "missing"
@@ -266,10 +265,33 @@ def push_health() -> dict:
         "vapidCanSign": sign_ok,
         "privateKeyStatus": private_key_status,
         "pywebpushInstalled": pywebpush_ok,
-        "subscribedUsers": len(subs),
-        "subscribedDevices": sum(len(s) for s in subs.values()),
-        "staleSubscriptionCount": count_stale_push_subscriptions(),
     }
+
+
+def push_health_client() -> dict:
+    """Lightweight health for PWA (vapid-public-key): no full-table subscription scan."""
+    h = _push_health_crypto_core()
+    h.update(push_scheduler_health())
+    return h
+
+
+def push_health() -> dict:
+    """Full diagnostics for ops (includes subscription counts; scans push_subscriptions)."""
+    out = _push_health_crypto_core()
+    subs = db.list_push_subscriptions_grouped_by_user()
+    current = vapid_public_key() or ""
+    stale = 0
+    devices = 0
+    for sublist in subs.values():
+        for sub in sublist:
+            devices += 1
+            saved = str(sub.get("_vapidPublicKey") or "").strip()
+            if saved and current and saved != current:
+                stale += 1
+    out["subscribedUsers"] = len(subs)
+    out["subscribedDevices"] = devices
+    out["staleSubscriptionCount"] = stale
+    return out
 
 
 def push_scheduler_health() -> dict:
@@ -293,7 +315,7 @@ def vapid_claim_email() -> str:
 
 
 def push_configured() -> bool:
-    h = push_health()
+    h = _push_health_crypto_core()
     return bool(h.get("configured") and h.get("privateKeySignable") and h.get("vapidCanSign"))
 
 
