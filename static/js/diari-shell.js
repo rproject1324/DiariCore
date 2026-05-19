@@ -132,8 +132,9 @@
 (function () {
     var PENDING = 'diari-shell-pending';
     var READY = 'diari-shell-ready';
+    var releaseQueued = false;
 
-    function release() {
+    function completeRelease() {
         if (!document.documentElement.classList.contains(PENDING)) return;
         requestAnimationFrame(function () {
             requestAnimationFrame(function () {
@@ -143,7 +144,35 @@
         });
     }
 
-    window.DiariShell = { release: release };
+    function release() {
+        if (!document.documentElement.classList.contains(PENDING)) return;
+        releaseQueued = true;
+        if (
+            window.DiariPwaLaunch &&
+            typeof window.DiariPwaLaunch.shouldRunLaunch === 'function' &&
+            window.DiariPwaLaunch.shouldRunLaunch() &&
+            typeof window.DiariPwaLaunch.notifyAppReady === 'function'
+        ) {
+            window.DiariPwaLaunch.notifyAppReady();
+            return;
+        }
+        if (window.DiariPwaLaunch && typeof window.DiariPwaLaunch.isFinished === 'function') {
+            if (!window.DiariPwaLaunch.isFinished()) {
+                if (typeof window.DiariPwaLaunch.whenFinished === 'function') {
+                    window.DiariPwaLaunch.whenFinished().then(completeRelease);
+                }
+                return;
+            }
+        }
+        completeRelease();
+    }
+
+    window.DiariShell = {
+        release: release,
+        _completeRelease: function () {
+            if (releaseQueued) completeRelease();
+        },
+    };
 
     document.addEventListener('DOMContentLoaded', function () {
         if (!document.querySelector('.diari-shell-main')) {

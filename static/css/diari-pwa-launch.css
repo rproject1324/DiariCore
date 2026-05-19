@@ -1,0 +1,101 @@
+/* PWA only — full-screen launch sequence before app shell is revealed (see diari-pwa-launch.js). */
+
+html.diari-pwa-launch-active {
+    background: #ffffff !important;
+}
+
+html.diari-pwa-launch-active body {
+    background: #ffffff !important;
+}
+
+html.diari-pwa-launch-active .mobile-app-topbar,
+html.diari-pwa-launch-active .floating-streak,
+html.diari-pwa-launch-active .dashboard-container,
+html.diari-pwa-launch-active .main-content {
+    visibility: hidden !important;
+}
+
+.diari-pwa-launch {
+    position: fixed;
+    inset: 0;
+    z-index: 200000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    overflow: hidden;
+    touch-action: none;
+}
+
+.diari-pwa-launch__stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.diari-pwa-launch__loading {
+    width: min(88vw, 420px);
+    height: auto;
+    aspect-ratio: 1;
+}
+
+.diari-pwa-launch__explosion-wrap {
+    position: relative;
+    width: min(132vmin, 640px);
+    height: min(132vmin, 640px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.diari-pwa-launch__explosion {
+    width: 100%;
+    height: 100%;
+}
+
+.diari-pwa-launch__brand {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) scale(0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.diari-pwa-launch__brand.is-visible {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+}
+
+.diari-pwa-launch__logo {
+    width: clamp(72px, 22vw, 112px);
+    height: clamp(72px, 22vw, 112px);
+    object-fit: contain;
+    border-radius: 0;
+    background: transparent;
+}
+
+.diari-pwa-launch__title {
+    margin: 0;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    font-size: clamp(1.35rem, 5vw, 1.75rem);
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    text-indent: 0.28em;
+    color: #3d4a45;
+    line-height: 1.1;
+}
+
+.diari-pwa-launch--hidden {
+    display: none !important;
+}

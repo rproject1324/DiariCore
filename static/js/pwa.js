@@ -9,6 +9,21 @@
     const ICON_HREF = '/diariclogo.png';
     const THEME_COLOR = '#6F8F7F';
 
+    function injectPwaLaunchAssets() {
+        if (!isStandalone()) return;
+        const head = document.head;
+        if (!head || head.querySelector('[data-diari-pwa-launch-css]')) return;
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '/diari-pwa-launch.css';
+        link.dataset.diariPwaLaunchCss = '1';
+        head.appendChild(link);
+        const script = document.createElement('script');
+        script.src = '/diari-pwa-launch.js';
+        script.dataset.diariPwaLaunchJs = '1';
+        head.appendChild(script);
+    }
+
     function injectPwaHead() {
         const head = document.head;
         if (!head || head.querySelector('link[rel="manifest"]')) return;
@@ -360,6 +375,7 @@
         }
     }
 
+    injectPwaLaunchAssets();
     injectPwaHead();
     registerServiceWorker();
     bindInstallPrompt();
