@@ -2773,8 +2773,22 @@ function formatProfilePushStatusForPhone(data) {
     lines.push('Daily reminders on: ' + (data.dailyEnabled ? 'yes' : 'no'));
     lines.push('Wrote entry today: ' + (data.hasEntryToday ? 'yes — no daily nudge today' : 'no'));
     lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
-    lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
+    if (data.dailyDeliveryStatus === 'confirmed_on_phone') {
+        lines.push('Banner confirmed on phone today: yes');
+    } else if (data.dailyDeliveryStatus === 'sent_to_google_waiting_for_phone') {
+        lines.push('Banner confirmed on phone today: NO (Google has push, phone has not acked yet)');
+        if (data.pendingDailyReminder && data.pendingDailyReminder.attempts) {
+            lines.push('Server send attempts: ' + data.pendingDailyReminder.attempts);
+        }
+    } else {
+        lines.push('Banner confirmed on phone today: no');
+    }
+    lines.push('Legacy “already sent” flag: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
     lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if (data.deliveryMismatchWarning) {
+        lines.push('');
+        lines.push('⚠ ' + data.deliveryMismatchWarning);
+    }
     if (data.criticalWarning) {
         lines.push('');
         lines.push('⚠ ' + data.criticalWarning);

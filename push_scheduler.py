@@ -80,8 +80,8 @@ def start(worker_id: int | None = None) -> None:
                     if ud:
                         u0 = ud[0]
                         extra = (
-                            f" user={u0.get('userId')} pushOk={u0.get('dailyPushOk', u0.get('pushOk'))} "
-                            f"pushFail={u0.get('dailyPushFail', u0.get('pushFail'))} "
+                            f" user={u0.get('userId')} pushOk={u0.get('dailyPushOk')} "
+                            f"pushFail={u0.get('dailyPushFail')} skip={u0.get('dailySkipReason')} "
                             f"devices={u0.get('devices')} target={u0.get('dailyPushTarget', '')}"
                         )
                 print(

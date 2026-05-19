@@ -20,7 +20,11 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v17"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v18"
+DAILY_PUSH_RETRY_MIN_SECONDS = max(
+    120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
+)
+DAILY_PUSH_MAX_ATTEMPTS = max(2, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "4")))
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -486,16 +490,139 @@ def _mark_daily_reminder_sent(state: dict, today_key: str, reminder: tuple[int, 
     state["lastDailyReminder"] = {"dateKey": today_key, "hhmm": hhmm}
     state["lastDailyReminderDateKey"] = today_key
     state["lastDailyReminderHhmm"] = hhmm
+    state.pop("pendingDailyReminder", None)
+
+
+def _mark_daily_reminder_pending(
+    state: dict, today_key: str, reminder: tuple[int, int], *, attempts: int
+) -> None:
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+    state["pendingDailyReminder"] = {
+        "dateKey": today_key,
+        "hhmm": hhmm,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "attempts": max(1, int(attempts)),
+    }
+
+
+def _pending_daily_matches(
+    state: dict, today_key: str, reminder: tuple[int, int]
+) -> dict | None:
+    pending = state.get("pendingDailyReminder")
+    if not isinstance(pending, dict):
+        return None
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+    if pending.get("dateKey") == today_key and pending.get("hhmm") == hhmm:
+        return pending
+    return None
+
+
+def _seconds_since_iso(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        s = str(ts).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
+    except Exception:
+        return None
+
+
+def _ack_confirms_daily_reminder(
+    state: dict, today_key: str, reminder: tuple[int, int]
+) -> bool:
+    """Delivery ack must be for today's daily tag at or after the reminder time."""
+    ack = state.get("lastDeliveryAck")
+    if not isinstance(ack, dict):
+        return False
+    if str(ack.get("tag") or "") != "diari-daily-reminder":
+        return False
+    try:
+        s = str(ack.get("at") or "").strip().replace("Z", "+00:00")
+        ack_dt = datetime.fromisoformat(s)
+        if ack_dt.tzinfo is None:
+            ack_dt = ack_dt.replace(tzinfo=timezone.utc)
+        ack_manila = ack_dt.astimezone(NOTIFY_TZ)
+    except Exception:
+        return False
+    if _manila_date_key(ack_manila) != today_key:
+        return False
+    ah, am = ack_manila.hour, ack_manila.minute
+    rh, rm = reminder
+    return (ah, am) >= (rh, rm)
+
+
+def _daily_reminder_confirmed_on_phone(
+    state: dict, today_key: str, reminder: tuple[int, int]
+) -> bool:
+    """True only when the service worker reported the daily banner on this phone."""
+    if not _daily_reminder_fired_today(state, today_key, reminder):
+        return False
+    if _pending_daily_matches(state, today_key, reminder):
+        return False
+    return _ack_confirms_daily_reminder(state, today_key, reminder)
+
+
+def _reconcile_legacy_daily_without_ack(
+    state: dict, today_key: str, reminder: tuple[int, int]
+) -> bool:
+    """
+    Older builds marked daily sent when FCM accepted the push, even if the phone never
+    showed a banner. Clear that flag so cron can retry while the app is closed.
+    """
+    if not _daily_reminder_fired_today(state, today_key, reminder):
+        return False
+    if _ack_confirms_daily_reminder(state, today_key, reminder):
+        return False
+    for key in (
+        "lastDailyReminder",
+        "lastDailyReminderDateKey",
+        "lastDailyReminderHhmm",
+    ):
+        state.pop(key, None)
+    return True
+
+
+def _should_send_daily_now(state: dict, today_key: str, reminder: tuple[int, int]) -> tuple[bool, str | None]:
+    """Whether cron should POST another daily push (allows retries until phone acks)."""
+    if _daily_reminder_confirmed_on_phone(state, today_key, reminder):
+        return False, "already_confirmed_on_phone"
+    pending = _pending_daily_matches(state, today_key, reminder)
+    if not pending:
+        return True, None
+    attempts = int(pending.get("attempts") or 1)
+    if attempts >= DAILY_PUSH_MAX_ATTEMPTS:
+        return False, "max_retries_without_phone_ack"
+    age = _seconds_since_iso(pending.get("at"))
+    if age is not None and age < DAILY_PUSH_RETRY_MIN_SECONDS:
+        return False, "waiting_before_retry"
+    return True, "retry_no_phone_ack_yet"
 
 
 def record_delivery_ack(user_id: int, data: dict) -> None:
     """Service worker calls this when a Web Push is received on the device."""
     state = dict(_user_push_state(user_id))
+    tag = str(data.get("tag") or "")
     state["lastDeliveryAck"] = {
         "at": (data.get("receivedAt") or datetime.now(timezone.utc).isoformat()),
-        "tag": str(data.get("tag") or ""),
+        "tag": tag,
         "title": str(data.get("title") or ""),
     }
+    if tag == "diari-daily-reminder":
+        today_key = _manila_date_key(_manila_now())
+        pending_raw = state.get("pendingDailyReminder")
+        if isinstance(pending_raw, dict):
+            rem = _parse_hhmm(str(pending_raw.get("hhmm") or ""))
+            if rem and pending_raw.get("dateKey") == today_key:
+                _mark_daily_reminder_sent(state, today_key, rem)
+        else:
+            prefs = _user_notification_prefs(user_id)
+            entries = _serialize_entries_for_user(user_id)
+            rem = _resolve_reminder_hhmm(prefs, entries)
+            if rem:
+                _mark_daily_reminder_sent(state, today_key, rem)
     _save_push_state(user_id, state)
 
 
@@ -513,7 +640,7 @@ def send_daily_test_push_to_user(user_id: int) -> dict:
         "A gentle journal nudge",
         _build_daily_body(),
         "/write-entry.html",
-        tag="diari-daily-reminder",
+        tag="diari-daily-reminder-test",
     )
     needs_resubscribe = bool(
         err
@@ -541,6 +668,7 @@ def clear_daily_reminder_state(user_id: int) -> None:
         "lastDailyReminder",
         "lastDailyReminderDateKey",
         "lastDailyReminderHhmm",
+        "pendingDailyReminder",
     ):
         state.pop(key, None)
     _save_push_state(user_id, state)
@@ -553,7 +681,8 @@ def schedule_status_for_user(user_id: int) -> dict:
     reminder = _resolve_reminder_hhmm(prefs, entries)
     now = _manila_now()
     h, m = _manila_hm(now)
-    state = _user_push_state(user_id)
+    state = dict(_user_push_state(user_id))
+    state_reconciled = False
     has_entry = _has_entry_today_manila(entries)
     hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
     last_daily = state.get("lastDailyReminder")
@@ -564,12 +693,22 @@ def schedule_status_for_user(user_id: int) -> dict:
         }
     else:
         last_daily_out = None
+    today_key = _manila_date_key(now)
+    if reminder and _reconcile_legacy_daily_without_ack(state, today_key, reminder):
+        state_reconciled = True
+    confirmed_today = (
+        _daily_reminder_confirmed_on_phone(state, today_key, reminder) if reminder else False
+    )
+    pending_daily = (
+        _pending_daily_matches(state, today_key, reminder) if reminder else None
+    )
     due_now = bool(
         not has_entry
         and prefs["dailyEnabled"]
         and reminder
         and _reminder_due_in_window(h, m, reminder)
-        and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
+        and not confirmed_today
+        and _should_send_daily_now(state, today_key, reminder)[0]
     )
     prefs_blob = db._load_ui_preferences_blob(user_id)
     push_debug = prefs_blob.get("pushDebug") if isinstance(prefs_blob.get("pushDebug"), dict) else {}
@@ -592,6 +731,8 @@ def schedule_status_for_user(user_id: int) -> dict:
     sched = push_scheduler_health()
     internal_off = bool(sched.get("internalCronDisabled"))
     last_dispatch = sched.get("lastDispatchAt")
+    if state_reconciled:
+        _save_push_state(user_id, state)
     return {
         "manilaNow": f"{h:02d}:{m:02d}",
         "dateKey": _manila_date_key(now),
@@ -605,19 +746,36 @@ def schedule_status_for_user(user_id: int) -> dict:
         "dailyEnabled": prefs["dailyEnabled"],
         "hasEntryToday": has_entry,
         "dailyDueNow": due_now,
-        "dailyAlreadySentToday": (
-            _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
-            if reminder
-            else False
+        "dailyAlreadySentToday": confirmed_today,
+        "dailyPushPending": bool(pending_daily),
+        "pendingDailyReminder": pending_daily,
+        "dailyDeliveryStatus": (
+            "confirmed_on_phone"
+            if confirmed_today
+            else (
+                "sent_to_google_waiting_for_phone"
+                if pending_daily
+                else "not_sent_yet"
+            )
         ),
         "serverLastDailyReminder": last_daily_out,
         "serverLegacyDailyDateKey": state.get("lastDailyReminderDateKey"),
         "serverLegacyDailyHhmm": state.get("lastDailyReminderHhmm"),
         "alreadySentHint": (
-            "Server marked this reminder time as sent today (at least one push subscription returned success). "
-            "Check every device signed into this account, OS notification history, and spam/blocked app notifications. "
-            "Chrome mobile emulation here does not receive Android pushes. "
-            "POST /api/push/reset-daily-reminder clears this flag for testing."
+            "Banner confirmed on this phone (service worker reported delivery)."
+            if confirmed_today
+            else (
+                "Google accepted the push but this phone has not confirmed yet — fully close the app, "
+                "disable battery saver for Chrome, wait up to 5 min for a retry. Tap Reset “sent today” to test again."
+                if pending_daily
+                else "No daily push confirmed on this phone yet today."
+            )
+        ),
+        "deliveryMismatchWarning": (
+            "Push reached Google but this phone has not shown the banner yet. "
+            "Fully close the app (swipe away), set Chrome battery to Unrestricted, and wait for a retry."
+            if pending_daily and not confirmed_today
+            else None
         ),
         "subscribedDevices": devices,
         "registrationOk": devices >= 1,
@@ -998,6 +1156,10 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         has_entry_today = _has_entry_today_manila(entries)
 
         reminder = _resolve_reminder_hhmm(prefs, entries)
+        if reminder and _reconcile_legacy_daily_without_ack(
+            state, today_key, reminder
+        ):
+            state_dirty = True
         dbg = {
             "userId": user_id,
             "reminderTimeOverride": prefs["reminderTimeOverride"],
@@ -1046,46 +1208,63 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                 prefs["dailyEnabled"]
                 and reminder
                 and _reminder_due_in_window(h, m, reminder)
-                and not _daily_reminder_fired_today(state, today_key, reminder)
             ):
                 daily_due_users += 1
-                dbg["dailyFiring"] = True
-                target = subs[:1]
-                ok_n = 0
-                fail_n = 0
-                last_ep = ""
-                for sub in target:
-                    ep_raw = sub.get("endpoint") or sub.get("_endpoint") or ""
-                    last_ep = _endpoint_hint(ep_raw)
-                    ok, err = send_web_push(
-                        sub,
-                        "A gentle journal nudge",
-                        _build_daily_body(),
-                        "/write-entry.html",
-                        tag="diari-daily-reminder",
+                should_send, skip_reason = _should_send_daily_now(
+                    state, today_key, reminder
+                )
+                dbg["dailySendAllowed"] = should_send
+                dbg["dailySkipReason"] = skip_reason
+                dbg["alreadyConfirmedOnPhone"] = _daily_reminder_confirmed_on_phone(
+                    state, today_key, reminder
+                )
+                if should_send:
+                    dbg["dailyFiring"] = True
+                    target = subs[:1]
+                    ok_n = 0
+                    fail_n = 0
+                    last_ep = ""
+                    pending_prev = _pending_daily_matches(state, today_key, reminder)
+                    prev_attempts = (
+                        int(pending_prev.get("attempts") or 0) if pending_prev else 0
                     )
-                    if ok:
-                        sent += 1
-                        ok_n += 1
-                    else:
-                        errors += 1
-                        fail_n += 1
-                        if err:
-                            last_error = err
-                dbg["pushOk"] = ok_n
-                dbg["pushFail"] = fail_n
-                dbg["dailyPushOk"] = ok_n
-                dbg["dailyPushFail"] = fail_n
-                dbg["dailyPushTarget"] = last_ep
-                ok_any = ok_n > 0
-                if ok_any:
-                    _mark_daily_reminder_sent(state, today_key, reminder)
-                    state_dirty = True
-                    state["lastDailyPushTarget"] = last_ep
-                elif fail_n > 0:
-                    dbg["dailyPushHint"] = (
-                        "Push failed for this device — open the PWA and tap Use this phone only."
-                    )
+                    for sub in target:
+                        ep_raw = sub.get("endpoint") or sub.get("_endpoint") or ""
+                        last_ep = _endpoint_hint(ep_raw)
+                        ok, err = send_web_push(
+                            sub,
+                            "A gentle journal nudge",
+                            _build_daily_body(),
+                            "/write-entry.html",
+                            tag="diari-daily-reminder",
+                        )
+                        if ok:
+                            sent += 1
+                            ok_n += 1
+                        else:
+                            errors += 1
+                            fail_n += 1
+                            if err:
+                                last_error = err
+                    dbg["pushOk"] = ok_n
+                    dbg["pushFail"] = fail_n
+                    dbg["dailyPushOk"] = ok_n
+                    dbg["dailyPushFail"] = fail_n
+                    dbg["dailyPushTarget"] = last_ep
+                    if ok_n > 0:
+                        _mark_daily_reminder_pending(
+                            state,
+                            today_key,
+                            reminder,
+                            attempts=prev_attempts + 1,
+                        )
+                        state_dirty = True
+                        state["lastDailyPushTarget"] = last_ep
+                        dbg["dailyPushPending"] = state.get("pendingDailyReminder")
+                    elif fail_n > 0:
+                        dbg["dailyPushHint"] = (
+                            "Push failed for this device — open the PWA and tap Use this phone only."
+                        )
 
             streak = _compute_streak(entries)
             if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:

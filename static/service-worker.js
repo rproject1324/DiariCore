@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v70';
+const CACHE_NAME = 'diaricore-pwa-v71';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -78,17 +78,23 @@ self.addEventListener('push', (event) => {
     event.waitUntil(
         (async () => {
             try {
-                await self.registration.showNotification(title, {
+                const notifOpts = {
                     body,
                     tag: notifTag,
                     renotify: true,
-                    requireInteraction: true,
+                    requireInteraction: false,
                     silent: false,
                     icon: '/diariclogo.png',
                     badge: '/diariclogo.png',
                     vibrate: [300, 100, 300, 100, 300],
                     data: { url, tag: notifTag },
-                });
+                };
+                try {
+                    notifOpts.priority = 'high';
+                } catch (_) {
+                    /* ignore */
+                }
+                await self.registration.showNotification(title, notifOpts);
             } catch (e) {
                 console.warn('[PWA SW] showNotification failed:', e);
             }
