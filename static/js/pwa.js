@@ -301,15 +301,33 @@
 
     function registerServiceWorker() {
         if (!('serviceWorker' in navigator)) return;
-        window.addEventListener('load', () => {
-            navigator.serviceWorker
-                .register(SW_URL, { scope: '/' })
+        if (isStandalone()) {
+            registerServiceWorkerEarly();
+        }
+        window.addEventListener('load', function () {
+            if (!isStandalone()) {
+                registerServiceWorkerEarly();
+                return;
+            }
+            navigator.serviceWorker.ready
                 .then(function () {
-                    if (isStandalone()) {
-                        void bootPwaPushRegistration();
-                    }
+                    return bootPwaPushRegistration();
                 })
-                .catch((err) => console.warn('[PWA] Service worker registration failed:', err));
+                .catch(function (err) {
+                    console.warn('[PWA] push boot after SW ready failed:', err);
+                });
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (!isStandalone() || document.visibilityState !== 'visible') return;
+            if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+            if (!window.DiariPwaWebPush) return;
+            const push = window.DiariPwaWebPush;
+            if (push.maintainPushRegistration) {
+                void push.maintainPushRegistration();
+            }
+            if (push.syncNotificationPrefsToServer) {
+                void push.syncNotificationPrefsToServer();
+            }
         });
     }
 
@@ -382,11 +400,13 @@
             return;
         }
         try {
-            const push = await window.DiariPwaWebPush.waitForReady(12000);
-            if (push.maintainPushRegistration) {
+            const push = await window.DiariPwaWebPush.waitForReady(15000);
+            if (push.ensureServerPushRegistration) {
+                await push.ensureServerPushRegistration({ force: true, maxAttempts: 6, quiet: true });
+            } else if (push.maintainPushRegistration) {
                 await push.maintainPushRegistration({ force: true });
             } else if (push.registerPushForReminders) {
-                await push.registerPushForReminders({ quiet: true });
+                await push.registerPushForReminders({ quiet: true, force: true });
             }
             if (push.syncNotificationPrefsToServer) {
                 await push.syncNotificationPrefsToServer();
@@ -394,6 +414,15 @@
         } catch (e) {
             console.warn('[PWA] push registration boot failed:', e);
         }
+    }
+
+    function registerServiceWorkerEarly() {
+        if (!('serviceWorker' in navigator)) return;
+        navigator.serviceWorker
+            .register(SW_URL, { scope: '/' })
+            .catch(function (err) {
+                console.warn('[PWA] Service worker registration failed:', err);
+            });
     }
 
     function loadPwaNotificationStack() {

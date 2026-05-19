@@ -6,6 +6,7 @@
 
     const WEB_PUSH_ACTIVE_KEY = 'diariCoreWebPushActive';
     const LAST_SAVE_KEY = 'diariCorePushLastSave';
+    const SESSION_REGISTERED_KEY = 'diariPwaPushSessionRegistered';
     const SAVE_DEBOUNCE_MS = 300000;
 
     function isPwaStandalone() {
@@ -122,6 +123,15 @@
     async function fetchScheduleStatus() {
         const res = await apiFetch('/api/push/schedule-status', { credentials: 'same-origin' });
         return res.json().catch(() => ({}));
+    }
+
+    async function countServerDevices() {
+        try {
+            const status = await fetchScheduleStatus();
+            return Number(status.subscribedDevices ?? 0);
+        } catch (_) {
+            return 0;
+        }
     }
 
     async function saveSubscriptionOnServer(sub) {
@@ -295,12 +305,15 @@
             last.ep === endpoint &&
             Date.now() - (last.at || 0) < SAVE_DEBOUNCE_MS
         ) {
-            return {
-                ok: true,
-                skipped: true,
-                subscribedDevices: last.devices ?? 1,
-                schedule: last.schedule,
-            };
+            const serverDevices = await countServerDevices();
+            if (serverDevices >= 1) {
+                return {
+                    ok: true,
+                    skipped: true,
+                    subscribedDevices: serverDevices,
+                    schedule: last.schedule,
+                };
+            }
         }
         const data = await saveSubscriptionOnServer(sub);
         const devices =
@@ -331,9 +344,13 @@
     let lastMaintainAttemptMs = 0;
     let maintainInFlight = null;
 
-    async function registerPushForReminders(options) {
+    /**
+     * Classmate-style flow: SW ready → PushManager.subscribe(VAPID) → POST /api/push/subscribe
+     * → verify server has ≥1 device (replaces debug-panel “Use this phone only”).
+     */
+    async function ensureServerPushRegistration(options) {
         const quiet = !options || options.quiet !== false;
-        const maxAttempts = options && options.maxAttempts ? options.maxAttempts : 5;
+        const maxAttempts = (options && options.maxAttempts) || 6;
         const force = !!(options && options.force);
         if (!isPwaStandalone()) {
             return { ok: false, error: 'Open DiariCore from your home-screen app, not a browser tab.' };
@@ -344,16 +361,38 @@
                 error: 'Allow notifications for Chrome in Android Settings, then reopen DiariCore.',
             };
         }
-        let lastError = 'Could not register this phone';
+        if (!('serviceWorker' in navigator) || !('PushManager' in global)) {
+            return { ok: false, error: 'Push not supported on this browser' };
+        }
+        let lastError = 'Could not register this phone on the server';
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             try {
-                const result = await syncPushSubscriptionToServer({ force: force });
-                const devices =
+                const result = await syncPushSubscriptionToServer({
+                    force: force || attempt > 0,
+                });
+                let devices =
                     result.subscribedDevices ??
                     result.schedule?.subscribedDevices ??
                     0;
+                if (devices < 1) {
+                    devices = await countServerDevices();
+                }
                 if (result.ok && devices >= 1) {
-                    return { ok: true, subscribedDevices: devices };
+                    try {
+                        global.sessionStorage.setItem(SESSION_REGISTERED_KEY, '1');
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    try {
+                        global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+                    } catch (_) {
+                        /* ignore */
+                    }
+                    if (global.DiariPwaNotifications?.syncPrefsToWorker) {
+                        void global.DiariPwaNotifications.syncPrefsToWorker();
+                    }
+                    global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
+                    return { ok: true, subscribedDevices: devices, schedule: result.schedule };
                 }
                 if (result && result.error) {
                     lastError = result.error;
@@ -361,12 +400,24 @@
             } catch (e) {
                 lastError = e && e.message ? e.message : lastError;
                 if (!quiet) {
-                    console.warn('[DiariPwaWebPush] register attempt', attempt + 1, e);
+                    console.warn('[DiariPwaWebPush] ensure register attempt', attempt + 1, e);
                 }
             }
-            await delay(attempt < 2 ? 400 : 800);
+            await delay(attempt < 2 ? 500 : attempt < 4 ? 900 : 1400);
+        }
+        try {
+            const diag = await runPushDiagnostics();
+            if (diag.error) {
+                lastError = diag.error;
+            }
+        } catch (_) {
+            /* ignore */
         }
         return { ok: false, error: lastError };
+    }
+
+    async function registerPushForReminders(options) {
+        return ensureServerPushRegistration(options);
     }
 
     /**
@@ -374,15 +425,26 @@
      */
     async function maintainPushRegistration(options) {
         const force = !!(options && options.force);
+        let sessionNeedsRegister = false;
+        try {
+            sessionNeedsRegister =
+                global.sessionStorage.getItem(SESSION_REGISTERED_KEY) !== '1';
+        } catch (_) {
+            sessionNeedsRegister = true;
+        }
         const now = Date.now();
-        if (!force && now - lastMaintainAttemptMs < 300000) {
+        if (!force && !sessionNeedsRegister && now - lastMaintainAttemptMs < 300000) {
             return { ok: true, skipped: true };
         }
         if (maintainInFlight) {
             return maintainInFlight;
         }
         lastMaintainAttemptMs = now;
-        maintainInFlight = registerPushForReminders({ quiet: true, maxAttempts: force ? 5 : 3 })
+        maintainInFlight = ensureServerPushRegistration({
+            quiet: true,
+            maxAttempts: force || sessionNeedsRegister ? 6 : 3,
+            force: force || sessionNeedsRegister,
+        })
             .then(function (result) {
                 maintainInFlight = null;
                 return result;
@@ -632,6 +694,7 @@
         isWebPushActive,
         subscribeWebPush,
         registerPushForReminders,
+        ensureServerPushRegistration,
         maintainPushRegistration,
         syncPushSubscriptionToServer,
         renewPushSubscription,

@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v82';
+const CACHE_NAME = 'diaricore-pwa-v83';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -122,13 +122,59 @@ self.addEventListener('push', (event) => {
     );
 });
 
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+    return out;
+}
+
+async function resubscribePushInServiceWorker() {
+    const reg = self.registration;
+    if (!reg || !reg.pushManager) return;
+    const vapidRes = await fetch('/api/push/vapid-public-key', { credentials: 'same-origin' });
+    const vapidData = await vapidRes.json().catch(() => ({}));
+    if (!vapidRes.ok || !vapidData.publicKey) return;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+        sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidData.publicKey),
+        });
+    }
+    if (!sub) return;
+    await fetch('/api/push/subscribe', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            subscription: sub.toJSON(),
+            keepThisDeviceOnly: true,
+        }),
+    });
+}
+
 self.addEventListener('pushsubscriptionchange', (event) => {
     event.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-            for (const client of clients) {
-                client.postMessage({ type: 'DIARI_PUSH_SUBSCRIPTION_CHANGE' });
+        (async () => {
+            const clients = await self.clients.matchAll({
+                type: 'window',
+                includeUncontrolled: true,
+            });
+            if (clients.length) {
+                for (const client of clients) {
+                    client.postMessage({ type: 'DIARI_PUSH_SUBSCRIPTION_CHANGE' });
+                }
+                return;
             }
-        })
+            try {
+                await resubscribePushInServiceWorker();
+            } catch (e) {
+                console.warn('[PWA SW] pushsubscriptionchange resubscribe failed:', e);
+            }
+        })()
     );
 });
 

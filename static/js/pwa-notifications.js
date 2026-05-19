@@ -239,11 +239,13 @@
         await syncPrefsToWorker();
         if (result === 'granted' && global.DiariPwaWebPush) {
             try {
-                const push = await global.DiariPwaWebPush.waitForReady(12000);
-                if (push.maintainPushRegistration) {
+                const push = await global.DiariPwaWebPush.waitForReady(15000);
+                if (push.ensureServerPushRegistration) {
+                    await push.ensureServerPushRegistration({ force: true, maxAttempts: 6, quiet: true });
+                } else if (push.maintainPushRegistration) {
                     await push.maintainPushRegistration({ force: true });
                 } else if (push.registerPushForReminders) {
-                    await push.registerPushForReminders({ quiet: true });
+                    await push.registerPushForReminders({ quiet: true, force: true });
                 }
                 if (push.syncNotificationPrefsToServer) {
                     await push.syncNotificationPrefsToServer();
@@ -299,7 +301,13 @@
                     }
                     pushSubscriptionChangeTimer = global.setTimeout(function () {
                         pushSubscriptionChangeTimer = null;
-                        if (global.DiariPwaWebPush?.syncPushSubscriptionToServer) {
+                        if (global.DiariPwaWebPush?.ensureServerPushRegistration) {
+                            void global.DiariPwaWebPush.ensureServerPushRegistration({
+                                force: true,
+                                maxAttempts: 5,
+                                quiet: true,
+                            });
+                        } else if (global.DiariPwaWebPush?.syncPushSubscriptionToServer) {
                             void global.DiariPwaWebPush.syncPushSubscriptionToServer({ force: true });
                         }
                     }, 2000);
@@ -408,11 +416,13 @@
                 await requestPermissionIfNeeded();
             } else if (Notification?.permission === 'granted' && global.DiariPwaWebPush?.waitForReady) {
                 try {
-                    const push = await global.DiariPwaWebPush.waitForReady(12000);
-                    if (push.maintainPushRegistration) {
+                    const push = await global.DiariPwaWebPush.waitForReady(15000);
+                    if (push.ensureServerPushRegistration) {
+                        await push.ensureServerPushRegistration({ force: true, maxAttempts: 6, quiet: true });
+                    } else if (push.maintainPushRegistration) {
                         await push.maintainPushRegistration({ force: true });
                     } else if (push.registerPushForReminders) {
-                        await push.registerPushForReminders({ quiet: true });
+                        await push.registerPushForReminders({ quiet: true, force: true });
                     }
                     if (push.syncNotificationPrefsToServer) {
                         await push.syncNotificationPrefsToServer();
