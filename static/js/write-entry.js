@@ -5,6 +5,9 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     }
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
 
     // Initialize variables
     let selectedFeeling = null;

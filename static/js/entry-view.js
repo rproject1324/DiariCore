@@ -2583,6 +2583,9 @@
         if (window.DiariOffline?.awaitServerState) {
             await window.DiariOffline.awaitServerState();
         }
+        if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+            window.DiariShell.release();
+        }
         await mount({
             entryId: id,
             onLeavePanel: () => {

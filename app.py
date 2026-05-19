@@ -1097,13 +1097,13 @@ def api_sync_check():
     row = db.get_user_by_id(user_id)
     if not row:
         return jsonify({"success": False, "error": "User not found."}), 404
-    rows = db.get_journal_entries_by_user(user_id)
+    stamp_rows = db.get_journal_entry_sync_stamps(user_id)
     resp = jsonify(
         {
             "success": True,
             "serverTime": datetime.now(timezone.utc).isoformat(),
-            "syncRevision": _compute_sync_revision(user_id, row, rows),
-            "entriesCount": len(rows),
+            "syncRevision": _compute_sync_revision(user_id, row, stamp_rows),
+            "entriesCount": len(stamp_rows),
         }
     )
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -1150,8 +1150,8 @@ def api_sync_stream():
             if not row:
                 yield 'event: error\ndata: {"error":"not_found"}\n\n'
                 break
-            rows = db.get_journal_entries_by_user(user_id)
-            rev = _compute_sync_revision(user_id, row, rows)
+            stamp_rows = db.get_journal_entry_sync_stamps(user_id)
+            rev = _compute_sync_revision(user_id, row, stamp_rows)
             if rev != last_rev:
                 last_rev = rev
                 heartbeats = 0
@@ -1159,7 +1159,7 @@ def api_sync_stream():
                     {
                         "syncRevision": rev,
                         "serverTime": datetime.now(timezone.utc).isoformat(),
-                        "entriesCount": len(rows),
+                        "entriesCount": len(stamp_rows),
                     }
                 )
                 yield f"data: {payload}\n\n"

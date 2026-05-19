@@ -28,6 +28,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         await window.DiariOffline.awaitServerState();
     }
     refreshProfileAfterPwaSync();
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
 
     initializeProfileInteractions();
     initializePreferenceToggles();

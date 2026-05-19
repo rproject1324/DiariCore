@@ -68,7 +68,7 @@
 
         async function tryUrl(url) {
             const ctrl = new AbortController();
-            const timer = global.setTimeout(() => ctrl.abort(), 8000);
+            const timer = global.setTimeout(() => ctrl.abort(), 3500);
             try {
                 const res = await fetchFn(url, { ...probeOpts, signal: ctrl.signal });
                 global.clearTimeout(timer);
@@ -84,12 +84,7 @@
             }
         }
 
-        if (await tryUrl('/api/health?dcReach=' + Date.now())) return true;
-        const userId = getUserId();
-        if (userId && (await tryUrl('/api/entries?dcReach=' + Date.now() + '&userId=' + encodeURIComponent(String(userId))))) {
-            return true;
-        }
-        return false;
+        return await tryUrl('/api/health?dcReach=' + Date.now());
     }
 
     /**
@@ -1996,8 +1991,33 @@
             return remotePullPromise;
         }
 
+        const force = options.force === true;
+
         remotePullPromise = (async () => {
-            await runPrePullFlush();
+            if (!force) {
+                try {
+                    const rev = await hasRemoteRevisionChanged();
+                    if (!rev.changed && !rev.authExpired) {
+                        return { ok: true, skipped: true, reason: 'revision-unchanged' };
+                    }
+                    if (rev.authExpired) {
+                        return { ok: false, authExpired: true };
+                    }
+                } catch {
+                    /* fall through to full pull on revision check failure */
+                }
+            }
+
+            let pending = false;
+            try {
+                pending = force || (await hasPendingOfflineWorkAsync());
+            } catch {
+                pending = force || hasPendingOfflineWork();
+            }
+            if (pending) {
+                await runPrePullFlush();
+            }
+
             const result = await pullFromServerHard();
             handleAuthExpiredFromSync(result);
             return result;
@@ -2100,16 +2120,21 @@
         if (liveRemoteSyncStarted) return;
         liveRemoteSyncStarted = true;
 
-        startSyncEventStream();
-
         const tick = () => {
             if (!isAuthenticatedAppPage()) return;
             if (document.visibilityState === 'hidden') return;
-            void pullRemoteStateForRefresh({ force: true });
+            void pullRemoteStateForRefresh();
         };
 
-        tick();
-        liveRemoteSyncTimer = global.setInterval(tick, LIVE_REMOTE_SYNC_MS);
+        const begin = () => {
+            if (!isAuthenticatedAppPage()) return;
+            startSyncEventStream();
+            tick();
+            liveRemoteSyncTimer = global.setInterval(tick, LIVE_REMOTE_SYNC_MS);
+        };
+
+        global.setTimeout(begin, LIVE_REMOTE_SYNC_START_DELAY_MS);
+
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 startSyncEventStream();
@@ -2207,8 +2232,16 @@
         global.location.href = 'login.html';
     }
 
+    function tryReleaseShellFromCache() {
+        if (!hasUsableLocalCache()) return;
+        if (global.DiariShell && typeof global.DiariShell.release === 'function') {
+            global.DiariShell.release();
+        }
+    }
+
     function tryStartAuthenticatedSync() {
         if (!isAuthenticatedAppPage()) return;
+        tryReleaseShellFromCache();
         startBootServerSync();
         startLiveRemoteSync();
     }

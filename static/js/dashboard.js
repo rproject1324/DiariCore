@@ -110,6 +110,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         await syncEntriesFromApi();
     }
     refreshDashboardFromSyncedStorage();
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
     initializeGreetingClock();
     initializeStreakBook();
     

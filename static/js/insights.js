@@ -303,6 +303,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     } else {
         await syncInsightsEntriesFromApi();
     }
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
     INSIGHTS_ENTRIES = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]').filter((e) => e && e.date);
     HAS_INSIGHTS_DATA = INSIGHTS_ENTRIES.length > 0;
     applyInsightsEmptyState();

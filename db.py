@@ -2083,6 +2083,36 @@ def get_journal_entries_by_user(user_id: int):
         conn.close()
 
 
+def get_journal_entry_sync_stamps(user_id: int):
+    """Entry id + timestamps only (sync revision / SSE; no text or images)."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute(
+                """
+                SELECT id, updated_at, created_at
+                FROM journal_entries
+                WHERE user_id = %s
+                ORDER BY id ASC
+                """,
+                (user_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, updated_at, created_at
+                FROM journal_entries
+                WHERE user_id = ?
+                ORDER BY id ASC
+                """,
+                (user_id,),
+            )
+        return [row_to_dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def get_journal_entry_by_id(entry_id: int, user_id: int):
     conn = get_conn()
     cur = conn.cursor()

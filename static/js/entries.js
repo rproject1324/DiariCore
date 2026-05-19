@@ -113,7 +113,10 @@ document.addEventListener('DOMContentLoaded', async function() {
         entriesPwaInitialSyncDone = true;
     }
     initializeEntriesFromStorage();
-    await syncEntriesFilterTagsFromApi();
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
+    void syncEntriesFilterTagsFromApi();
     initializeFilterDropdown();
     initializeSearch();
     initializeEntryCards();
