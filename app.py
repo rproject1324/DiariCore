@@ -27,7 +27,6 @@ import input_security as insec
 import password_policy
 import space_nlp
 import push_service
-import push_scheduler
 
 ENTRY_WORD_MAX = int(os.environ.get("ENTRY_WORD_MAX", "300"))
 
