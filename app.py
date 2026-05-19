@@ -2482,10 +2482,23 @@ def api_push_subscribe():
         return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
     if not db.upsert_push_subscription(user_id, sub, push_service.vapid_public_key()):
         return jsonify({"success": False, "error": "Could not save subscription."}), 500
+    endpoint = str(sub.get("endpoint") or "").strip()
+    pruned = 0
+    if data.get("keepThisDeviceOnly") is not False and endpoint:
+        pruned = db.prune_push_subscriptions_for_user(
+            user_id, keep_endpoint=endpoint, max_keep=2
+        )
     notif = data.get("notifications")
     if isinstance(notif, dict):
         db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
-    return jsonify({"success": True, "webPush": True}), 200
+    return jsonify(
+        {
+            "success": True,
+            "webPush": True,
+            "prunedOtherDevices": pruned,
+            "schedule": push_service.schedule_status_for_user(user_id),
+        }
+    ), 200
 
 
 @app.route("/api/push/unsubscribe", methods=["POST"])

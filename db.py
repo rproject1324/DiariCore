@@ -2027,6 +2027,96 @@ def delete_push_subscription_by_endpoint(endpoint: str) -> bool:
         conn.close()
 
 
+def list_push_subscriptions_for_user(user_id: int) -> list[dict]:
+    """Subscriptions for one user, newest updated_at first."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return []
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if USE_POSTGRES:
+            cur.execute(
+                """
+                SELECT subscription_json, endpoint, updated_at
+                FROM push_subscriptions
+                WHERE user_id = %s
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (user_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT subscription_json, endpoint, updated_at
+                FROM push_subscriptions
+                WHERE user_id = ?
+                ORDER BY datetime(updated_at) DESC, id DESC
+                """,
+                (user_id,),
+            )
+        out = []
+        for row in cur.fetchall():
+            d = row_to_dict(row)
+            try:
+                sub = json.loads(d.get("subscription_json") or "{}")
+            except Exception:
+                continue
+            if isinstance(sub, dict) and sub.get("endpoint"):
+                sub["_endpoint"] = d.get("endpoint")
+                sub["_updatedAt"] = d.get("updated_at")
+                out.append(sub)
+        return out
+    finally:
+        conn.close()
+
+
+def prune_push_subscriptions_for_user(
+    user_id: int, *, keep_endpoint: str | None = None, max_keep: int = 2
+) -> int:
+    """Delete old device registrations; always keep keep_endpoint if set."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return 0
+    max_keep = max(1, int(max_keep))
+    subs = list_push_subscriptions_for_user(user_id)
+    if not subs:
+        return 0
+    keep_eps: list[str] = []
+    if keep_endpoint:
+        keep_eps.append(str(keep_endpoint).strip())
+    for sub in subs:
+        ep = str(sub.get("endpoint") or sub.get("_endpoint") or "").strip()
+        if ep and ep not in keep_eps:
+            keep_eps.append(ep)
+        if len(keep_eps) >= max_keep:
+            break
+    conn = get_conn()
+    cur = conn.cursor()
+    removed = 0
+    try:
+        for sub in subs:
+            ep = str(sub.get("endpoint") or sub.get("_endpoint") or "").strip()
+            if not ep or ep in keep_eps:
+                continue
+            if USE_POSTGRES:
+                cur.execute(
+                    "DELETE FROM push_subscriptions WHERE user_id = %s AND endpoint = %s",
+                    (user_id, ep),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?",
+                    (user_id, ep),
+                )
+            removed += cur.rowcount
+        conn.commit()
+        return removed
+    except Exception:
+        conn.rollback()
+        return removed
+    finally:
+        conn.close()
+
+
 def list_push_subscriptions_grouped_by_user():
     """Return {user_id: [subscription_dict, ...]}."""
     conn = get_conn()

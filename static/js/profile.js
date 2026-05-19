@@ -2775,6 +2775,13 @@ function formatProfilePushStatusForPhone(data) {
     lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
     lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
     lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if (data.subscriptionWarning) {
+        lines.push('');
+        lines.push('⚠ ' + data.subscriptionWarning);
+    }
+    if (Array.isArray(data.subscriptionDeviceHints) && data.subscriptionDeviceHints.length) {
+        lines.push('Registered: ' + data.subscriptionDeviceHints.join(', '));
+    }
     if (data.internalCronDisabled) {
         lines.push('');
         lines.push('⚠ Scheduler OFF on Railway (DISABLE_INTERNAL_PUSH_CRON).');
@@ -2817,6 +2824,42 @@ function initializeProfilePushStatusPanel() {
     profilePushStatusBound = true;
     const refreshBtn = document.getElementById('profilePushStatusRefresh');
     const resetBtn = document.getElementById('profilePushResetDaily');
+    const thisPhoneBtn = document.getElementById('profilePushThisPhoneOnly');
+    if (thisPhoneBtn) {
+        thisPhoneBtn.addEventListener('click', async function () {
+            thisPhoneBtn.disabled = true;
+            try {
+                if (window.DiariPwaWebPush?.subscribeWebPush) {
+                    await window.DiariPwaWebPush.subscribeWebPush();
+                }
+                if (window.DiariPwaWebPush?.sendTestPush) {
+                    const test = await window.DiariPwaWebPush.sendTestPush();
+                    if (test && test.ok) {
+                        showNotification(
+                            'This phone is now the main device for reminders. Try your reminder time again.',
+                            'success',
+                            6000
+                        );
+                    } else {
+                        showNotification(
+                            (test && test.error) || 'Could not confirm push on this phone.',
+                            'warning',
+                            5000
+                        );
+                    }
+                }
+                await fetch('/api/push/reset-daily-reminder', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+            } catch (e) {
+                showNotification('Setup failed — check notification permission.', 'warning', 5000);
+            } finally {
+                thisPhoneBtn.disabled = false;
+                void refreshProfilePushStatusPanel();
+            }
+        });
+    }
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function () {
             void refreshProfilePushStatusPanel();

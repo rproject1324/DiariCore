@@ -87,6 +87,7 @@
 
         const body = {
             subscription: sub.toJSON(),
+            keepThisDeviceOnly: true,
             ...buildNotificationPrefsPayload(),
         };
         const res = await fetch('/api/push/subscribe', {

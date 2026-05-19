@@ -62,7 +62,7 @@ def start(worker_id: int | None = None) -> None:
         while True:
             try:
                 with _lock:
-                    result = push_service.dispatch_due_notifications()
+                    result = push_service.dispatch_due_notifications(debug=True)
                 global _last_dispatch_at, _last_dispatch_summary
                 _last_dispatch_at = datetime.now(timezone.utc).isoformat()
                 _last_dispatch_summary = {
@@ -72,11 +72,22 @@ def start(worker_id: int | None = None) -> None:
                     "skippedEntryToday": result.get("skippedEntryToday"),
                     "ok": result.get("ok"),
                     "error": result.get("error"),
+                    "lastError": result.get("lastError"),
                 }
+                extra = ""
+                if result.get("dailyDueUsers"):
+                    ud = (result.get("userDebug") or [])[:1]
+                    if ud:
+                        u0 = ud[0]
+                        extra = (
+                            f" user={u0.get('userId')} pushOk={u0.get('pushOk')} "
+                            f"pushFail={u0.get('pushFail')} devices={u0.get('devices')}"
+                        )
                 print(
                     "[diari-push-cron] "
                     f"manila={result.get('manilaTime')} sent={result.get('sent')} "
-                    f"dailyDue={result.get('dailyDueUsers')} skippedEntry={result.get('skippedEntryToday')}",
+                    f"dailyDue={result.get('dailyDueUsers')} skippedEntry={result.get('skippedEntryToday')}"
+                    f"{extra}",
                     flush=True,
                 )
             except Exception as ex:

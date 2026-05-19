@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v10"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v11"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -521,8 +521,9 @@ def schedule_status_for_user(user_id: int) -> dict:
         and _reminder_due_in_window(h, m, reminder)
         and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
     )
-    grouped = db.list_push_subscriptions_grouped_by_user()
-    devices = len(grouped.get(int(user_id)) or [])
+    subs = db.list_push_subscriptions_for_user(user_id)
+    devices = len(subs)
+    device_hints = [_endpoint_hint(s.get("endpoint") or "") for s in subs[:5]]
     sched = push_scheduler_health()
     internal_off = bool(sched.get("internalCronDisabled"))
     last_dispatch = sched.get("lastDispatchAt")
@@ -554,6 +555,13 @@ def schedule_status_for_user(user_id: int) -> dict:
             "POST /api/push/reset-daily-reminder clears this flag for testing."
         ),
         "subscribedDevices": devices,
+        "subscriptionDeviceHints": device_hints,
+        "subscriptionWarning": (
+            f"You have {devices} registered devices. Reminders may go to an old phone or browser tab. "
+            "In Profile → Preferences tap “Use this phone only”, then test again."
+            if devices > 2
+            else None
+        ),
         "internalCronDisabled": internal_off,
         "schedulerStarted": sched.get("schedulerStarted"),
         "lastServerDispatchAt": last_dispatch,
@@ -641,8 +649,26 @@ def _build_insight_body(entry: dict) -> str:
     )
 
 
+def _endpoint_hint(endpoint: str) -> str:
+    ep = str(endpoint or "").strip()
+    if not ep:
+        return ""
+    if "fcm.googleapis.com" in ep or "googleapis.com" in ep:
+        return "Android/Chrome (FCM)"
+    if "mozilla.com" in ep:
+        return "Firefox"
+    if "apple.com" in ep or "push.apple.com" in ep:
+        return "Apple"
+    return ep[-36:] if len(ep) > 36 else ep
+
+
 def send_web_push(
-    subscription: dict, title: str, body: str, url: str = "/write-entry.html"
+    subscription: dict,
+    title: str,
+    body: str,
+    url: str = "/write-entry.html",
+    *,
+    tag: str = "diari-web-push",
 ) -> tuple[bool, str | None]:
     """Returns (ok, error_message)."""
     vapid = _get_vapid()
@@ -663,7 +689,7 @@ def send_web_push(
         from pywebpush import WebPushException, webpush
     except ImportError:
         return False, "pywebpush not installed on server"
-    payload = json.dumps({"title": title, "body": body, "url": url})
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
     try:
         # pywebpush treats str keys via Vapid.from_string (raw/der), not PEM — pass Vapid01 instance.
         webpush(
@@ -709,6 +735,7 @@ def send_test_push_to_all() -> dict:
                 "DiariCore test",
                 "If you see this, true push is working — even when the app is closed.",
                 "/dashboard.html",
+                tag="diari-web-push-test",
             )
             results.append({"userId": user_id, "ok": ok, "error": err})
             if ok:
@@ -754,6 +781,7 @@ def send_test_push_to_user(user_id: int) -> dict:
             "DiariCore test",
             "If you see this, true push is working — even when the app is closed.",
             "/dashboard.html",
+            tag="diari-web-push-test",
         )
         if ok:
             sent += 1
@@ -852,19 +880,28 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             "devices": len(subs),
         }
 
-        def _push_all(title: str, body: str, url: str) -> bool:
+        def _push_all(
+            title: str, body: str, url: str, *, tag: str = "diari-web-push"
+        ) -> tuple[bool, int, int]:
             nonlocal sent, errors, last_error
-            ok_any = False
+            ok_count = 0
+            fail_count = 0
             for sub in subs:
-                ok, err = send_web_push(sub, title, body, url)
+                ok, err = send_web_push(sub, title, body, url, tag=tag)
                 if ok:
                     sent += 1
-                    ok_any = True
+                    ok_count += 1
                 else:
                     errors += 1
+                    fail_count += 1
                     if err:
                         last_error = err
-            return ok_any
+            dbg["pushOk"] = ok_count
+            dbg["pushFail"] = fail_count
+            dbg["pushTargets"] = [
+                _endpoint_hint(sub.get("endpoint") or "") for sub in subs[:6]
+            ]
+            return ok_count > 0, ok_count, fail_count
 
         # Daily + streak: only when user has not journaled today (Manila).
         if not has_entry_today:
@@ -876,13 +913,21 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             ):
                 daily_due_users += 1
                 dbg["dailyFiring"] = True
-                if _push_all(
+                ok_any, ok_n, fail_n = _push_all(
                     "A gentle journal nudge",
                     _build_daily_body(),
                     "/write-entry.html",
-                ):
+                    tag="diari-daily-reminder",
+                )
+                dbg["dailyPushOk"] = ok_n
+                dbg["dailyPushFail"] = fail_n
+                if ok_any:
                     _mark_daily_reminder_sent(state, today_key, reminder)
                     state_dirty = True
+                elif fail_n > 0:
+                    dbg["dailyPushHint"] = (
+                        "All push endpoints failed — open the PWA and tap Use this phone only."
+                    )
 
             streak = _compute_streak(entries)
             if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:
@@ -895,7 +940,8 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                         "Your streak tonight",
                         _build_streak_body("1hr", streak),
                         "/write-entry.html",
-                    ):
+                        tag="diari-streak-reminder",
+                    )[0]:
                         state["lastStreak1hrDateKey"] = today_key
                         state_dirty = True
                 if (
@@ -907,7 +953,8 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                         "Before the day ends",
                         _build_streak_body("30min", streak),
                         "/write-entry.html",
-                    ):
+                        tag="diari-streak-reminder",
+                    )[0]:
                         state["lastStreak30minDateKey"] = today_key
                         state_dirty = True
         else:
@@ -921,7 +968,8 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                     "Following up on your journal",
                     _build_insight_body(last),
                     "/entries.html",
-                ):
+                    tag="diari-insight-followup",
+                )[0]:
                     state["lastInsightEntryId"] = str(last.get("id"))
                     state["lastInsightDateKey"] = today_key
                     state_dirty = True

@@ -268,15 +268,21 @@ self.addEventListener('push', (event) => {
     } catch (_) {
         /* ignore */
     }
+    const notifTag = payload.tag || 'diari-web-push';
     event.waitUntil(
-        self.registration.showNotification(payload.title || 'DiariCore', {
-            body: payload.body || '',
-            tag: 'diari-web-push',
-            renotify: true,
-            icon: '/diariclogo.png',
-            badge: '/diariclogo.png',
-            data: { url: payload.url || '/dashboard.html' },
-        })
+        self.registration
+            .showNotification(payload.title || 'DiariCore', {
+                body: payload.body || '',
+                tag: notifTag,
+                renotify: true,
+                icon: '/diariclogo.png',
+                badge: '/diariclogo.png',
+                vibrate: [200, 100, 200],
+                data: { url: payload.url || '/dashboard.html', tag: notifTag },
+            })
+            .catch(function (err) {
+                console.warn('[PWA SW] showNotification failed:', err);
+            })
     );
 });
 
