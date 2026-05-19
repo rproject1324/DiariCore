@@ -2821,6 +2821,47 @@ function formatProfilePushStatusForPhone(data) {
 
 let profilePushStatusBound = false;
 
+async function ensureDiariPwaWebPushReady(timeoutMs) {
+    if (window.DiariPwaWebPush?.syncPushSubscriptionToServer) {
+        return window.DiariPwaWebPush;
+    }
+    if (window.DiariPwaWebPush?.waitForReady) {
+        return window.DiariPwaWebPush.waitForReady(timeoutMs || 8000);
+    }
+    const max = timeoutMs || 8000;
+    const start = Date.now();
+    while (Date.now() - start < max) {
+        if (window.DiariPwaWebPush?.syncPushSubscriptionToServer) {
+            return window.DiariPwaWebPush;
+        }
+        await new Promise(function (r) {
+            setTimeout(r, 50);
+        });
+    }
+    return null;
+}
+
+async function autoRegisterPushFromProfile() {
+    if (!isPwaProfileContext()) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const push = await ensureDiariPwaWebPushReady(8000);
+    if (!push?.syncPushSubscriptionToServer) return;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const result = await push.syncPushSubscriptionToServer();
+            if (result && result.ok && (result.subscribedDevices ?? 0) >= 1) {
+                return result;
+            }
+        } catch (e) {
+            console.warn('[profile] push auto-register attempt', attempt + 1, e);
+        }
+        await new Promise(function (r) {
+            setTimeout(r, 600);
+        });
+    }
+    return null;
+}
+
 async function refreshProfilePushStatusPanel() {
     const panel = document.getElementById('profilePushStatusPanel');
     const pre = document.getElementById('profilePushStatusText');
@@ -2864,9 +2905,10 @@ function initializeProfilePushStatusPanel() {
                     (data.needsResubscribe ||
                         /expired|unsubscribed|use this phone only/i.test(String(data.error || '')))
                 ) {
-                    if (window.DiariPwaWebPush?.confirmPushOnThisPhone) {
+                    const push = await ensureDiariPwaWebPushReady(10000);
+                    if (push?.confirmPushOnThisPhone) {
                         showNotification('Refreshing push registration on this phone…', 'info', 3000);
-                        await window.DiariPwaWebPush.confirmPushOnThisPhone();
+                        await push.confirmPushOnThisPhone();
                         data = await sendDailyTest();
                     }
                 }
@@ -2898,12 +2940,21 @@ function initializeProfilePushStatusPanel() {
         thisPhoneBtn.addEventListener('click', async function () {
             thisPhoneBtn.disabled = true;
             try {
+                const push = await ensureDiariPwaWebPushReady(10000);
+                if (!push) {
+                    showNotification(
+                        'Push module not loaded. Close and reopen the app, then try again.',
+                        'warning',
+                        6000
+                    );
+                    return;
+                }
                 let result = { ok: false };
-                if (window.DiariPwaWebPush?.confirmPushOnThisPhone) {
-                    result = await window.DiariPwaWebPush.confirmPushOnThisPhone();
-                } else if (window.DiariPwaWebPush?.registerThisPhoneOnly) {
-                    const reg = await window.DiariPwaWebPush.registerThisPhoneOnly();
-                    result = { ok: !!reg.ok };
+                if (push.confirmPushOnThisPhone) {
+                    result = await push.confirmPushOnThisPhone();
+                } else if (push.registerThisPhoneOnly) {
+                    const reg = await push.registerThisPhoneOnly();
+                    result = { ok: !!reg.ok, message: reg.error };
                 }
                 if (result.ok) {
                     showNotification(
@@ -3281,15 +3332,11 @@ function openProfileSection(sectionKey) {
             window.DiariPwaNotifications.hydrateProfileNotificationUi();
         }
         initializeProfilePushStatusPanel();
-        if (
-            window.DiariPwaWebPush?.syncPushSubscriptionToServer &&
-            typeof Notification !== 'undefined' &&
-            Notification.permission === 'granted'
-        ) {
-            void window.DiariPwaWebPush.syncPushSubscriptionToServer();
-        }
-        void syncPushNotificationPrefsToServerFromProfile();
-        void refreshProfilePushStatusPanel();
+        void (async function () {
+            await autoRegisterPushFromProfile();
+            void syncPushNotificationPrefsToServerFromProfile();
+            await refreshProfilePushStatusPanel();
+        })();
     }
     if (sectionKey === 'personal-information') {
         hydratePersonalInfoPanel();

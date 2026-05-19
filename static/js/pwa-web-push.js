@@ -29,6 +29,18 @@
         return out;
     }
 
+    function subscriptionUsesVapidKey(sub, publicKeyB64) {
+        if (!sub || !publicKeyB64) return false;
+        const appKey = sub.options && sub.options.applicationServerKey;
+        if (!appKey) return true;
+        const expected = urlBase64ToUint8Array(publicKeyB64);
+        if (appKey.byteLength !== expected.byteLength) return false;
+        for (let i = 0; i < appKey.byteLength; i += 1) {
+            if (appKey[i] !== expected[i]) return false;
+        }
+        return true;
+    }
+
     function getEffectiveReminderHHmm() {
         try {
             if (global.DiariPwaNotifications?.getEffectiveReminderHHmm) {
@@ -70,6 +82,11 @@
         return data.publicKey;
     }
 
+    async function fetchScheduleStatus() {
+        const res = await apiFetch('/api/push/schedule-status', { credentials: 'same-origin' });
+        return res.json().catch(() => ({}));
+    }
+
     async function saveSubscriptionOnServer(sub) {
         const body = {
             subscription: sub.toJSON(),
@@ -90,8 +107,29 @@
     }
 
     /**
+     * Browser push subscription matching current VAPID key (re-subscribe only if mismatched).
+     */
+    async function getOrCreatePushSubscription(reg, publicKeyB64) {
+        let sub = await reg.pushManager.getSubscription();
+        if (sub && !subscriptionUsesVapidKey(sub, publicKeyB64)) {
+            try {
+                await sub.unsubscribe();
+            } catch (_) {
+                /* ignore */
+            }
+            sub = null;
+        }
+        if (!sub) {
+            sub = await reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(publicKeyB64),
+            });
+        }
+        return sub;
+    }
+
+    /**
      * Save the browser's current push subscription to Railway without unsubscribing first.
-     * Unsubscribing on every open was invalidating FCM tokens (closed-app push then fails).
      */
     async function syncPushSubscriptionToServer() {
         if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
@@ -103,14 +141,12 @@
         }
         const publicKey = await fetchVapidPublicKey();
         const reg = await navigator.serviceWorker.ready;
-        let sub = await reg.pushManager.getSubscription();
-        if (!sub) {
-            sub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(publicKey),
-            });
-        }
+        const sub = await getOrCreatePushSubscription(reg, publicKey);
         const data = await saveSubscriptionOnServer(sub);
+        const devices =
+            data.subscribedDevices ??
+            data.schedule?.subscribedDevices ??
+            0;
         try {
             global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
         } catch (_) {
@@ -120,7 +156,7 @@
             void global.DiariPwaNotifications.syncPrefsToWorker();
         }
         global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
-        return { ok: true, schedule: data.schedule, subscribedDevices: data.schedule?.subscribedDevices };
+        return { ok: true, schedule: data.schedule, subscribedDevices: devices };
     }
 
     async function subscribeWebPush() {
@@ -155,6 +191,10 @@
             applicationServerKey: urlBase64ToUint8Array(publicKey),
         });
         const data = await saveSubscriptionOnServer(sub);
+        const devices =
+            data.subscribedDevices ??
+            data.schedule?.subscribedDevices ??
+            0;
         try {
             global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
         } catch (_) {
@@ -163,7 +203,7 @@
         if (global.DiariPwaNotifications?.syncPrefsToWorker) {
             void global.DiariPwaNotifications.syncPrefsToWorker();
         }
-        return { ok: true, ...data };
+        return { ok: true, ...data, subscribedDevices: devices };
     }
 
     async function confirmWebPushWithServerTest() {
@@ -240,6 +280,7 @@
             return {
                 ok: !!data.ok,
                 schedule: data.schedule,
+                subscribedDevices: data.subscribedDevices,
                 error: data.ok ? null : 'Could not register this phone',
             };
         } catch (e) {
@@ -248,35 +289,28 @@
     }
 
     /**
-     * Subscribe + prune, then try test push (FCM may need a second after re-subscribe).
+     * Register this device on the server. Does NOT run an immediate test push (that was
+     * deleting fresh subscriptions when FCM returned 410 for a few seconds).
      */
     async function confirmPushOnThisPhone() {
-        const reg = await registerThisPhoneOnly();
+        let reg;
+        try {
+            reg = await registerThisPhoneOnly();
+        } catch (e) {
+            return { ok: false, error: e && e.message ? e.message : 'Could not register this phone' };
+        }
         if (!reg.ok) {
             return { ok: false, error: reg.error || 'Could not register this phone' };
         }
-        await delay(2000);
-        let test = await sendTestPush();
-        if (!test || !test.ok) {
-            try {
-                const res = await apiFetch('/api/push/send-daily-test', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                });
-                test = await res.json().catch(() => ({}));
-            } catch (_) {
-                test = {};
-            }
+        let devices = reg.subscribedDevices;
+        if (devices == null && reg.schedule) {
+            devices = reg.schedule.subscribedDevices;
         }
-        if (test && test.ok) {
-            try {
-                global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
-            } catch (_) {
-                /* ignore */
-            }
-            return { ok: true, tested: true };
+        if (devices < 1) {
+            await delay(500);
+            const status = await fetchScheduleStatus();
+            devices = status.subscribedDevices ?? 0;
         }
-        const devices = reg.schedule && reg.schedule.subscribedDevices;
         if (devices >= 1) {
             try {
                 global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
@@ -285,15 +319,38 @@
             }
             return {
                 ok: true,
-                soft: true,
+                subscribedDevices: devices,
                 message:
-                    'This phone is registered for reminders. Tap “Test daily nudge now”, then fully close the app.',
+                    'Registered on server (' +
+                    devices +
+                    ' device). Tap “Test daily nudge now”, then fully close the app.',
             };
         }
         return {
             ok: false,
-            error: (test && test.error) || 'Test push did not send. Check notification permission for Chrome.',
+            error:
+                'Server still shows 0 devices. Check internet, stay on this screen 10s, tap Refresh status.',
         };
+    }
+
+    /** Resolve when DiariPwaWebPush API is available (profile loads this file synchronously). */
+    function waitForReady(timeoutMs) {
+        const max = timeoutMs || 8000;
+        if (global.DiariPwaWebPush) return Promise.resolve(global.DiariPwaWebPush);
+        return new Promise(function (resolve, reject) {
+            const start = Date.now();
+            (function tick() {
+                if (global.DiariPwaWebPush) {
+                    resolve(global.DiariPwaWebPush);
+                    return;
+                }
+                if (Date.now() - start > max) {
+                    reject(new Error('Push module did not load'));
+                    return;
+                }
+                global.setTimeout(tick, 50);
+            })();
+        });
     }
 
     global.DiariPwaWebPush = {
@@ -310,5 +367,6 @@
         syncNotificationPrefsToServerBeacon,
         buildNotificationPrefsPayload,
         getEffectiveReminderHHmm,
+        waitForReady,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

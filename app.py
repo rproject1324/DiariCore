@@ -2488,6 +2488,12 @@ def api_push_subscribe():
         pruned = db.prune_push_subscriptions_for_user(
             user_id, keep_endpoint=endpoint, max_keep=1
         )
+    devices = len(db.list_push_subscriptions_for_user(user_id))
+    print(
+        f"[diari-push-subscribe] user={user_id} devices={devices} "
+        f"target={push_service._endpoint_hint(endpoint)} pruned={pruned}",
+        flush=True,
+    )
     notif = data.get("notifications")
     if isinstance(notif, dict):
         db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
@@ -2497,6 +2503,7 @@ def api_push_subscribe():
             "webPush": True,
             "prunedOtherDevices": pruned,
             "schedule": push_service.schedule_status_for_user(user_id),
+            "subscribedDevices": devices,
         }
     ), 200
 

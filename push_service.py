@@ -20,9 +20,13 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v15"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v16"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
+)
+# Do not delete a subscription FCM rejects right after register (token may need a moment).
+PUSH_SUBSCRIPTION_GRACE_SECONDS = max(
+    60, int(os.environ.get("PUSH_SUBSCRIPTION_GRACE_SECONDS", "300"))
 )
 
 
@@ -714,6 +718,28 @@ def _build_insight_body(entry: dict) -> str:
     )
 
 
+def _subscription_recently_registered(stored: dict, *, seconds: int | None = None) -> bool:
+    """True if this device row was saved recently (protect from instant FCM 410 after subscribe)."""
+    if not isinstance(stored, dict):
+        return False
+    raw = stored.get("_updatedAt")
+    if raw is None:
+        return False
+    grace = seconds if seconds is not None else PUSH_SUBSCRIPTION_GRACE_SECONDS
+    try:
+        if isinstance(raw, datetime):
+            updated = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+        else:
+            s = str(raw).strip().replace("Z", "+00:00")
+            updated = datetime.fromisoformat(s)
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - updated.astimezone(timezone.utc)).total_seconds()
+        return age < grace
+    except Exception:
+        return False
+
+
 def _endpoint_hint(endpoint: str) -> str:
     ep = str(endpoint or "").strip()
     if not ep:
@@ -784,6 +810,16 @@ def send_web_push(
             k in msg.lower() for k in ("expired", "unsubscribed", "not registered")
         )
         if dead_sub and endpoint:
+            if _subscription_recently_registered(subscription):
+                print(
+                    f"[diari-push-send] FAIL tag={tag} target={ep_hint} "
+                    f"expired but kept (registered <{PUSH_SUBSCRIPTION_GRACE_SECONDS}s ago)",
+                    flush=True,
+                )
+                return (
+                    False,
+                    "Push not ready yet on this phone — wait 30s and tap Test daily nudge now.",
+                )
             db.delete_push_subscription_by_endpoint(endpoint)
         if code in (401, 403):
             return (
