@@ -49,15 +49,21 @@
         );
     }
 
+    function isSplashEntryPage() {
+        const base = String(g.location.pathname || '').split('/').pop() || '';
+        return base === 'pwa-splash.html';
+    }
+
     function shouldRunLaunch() {
         if (!isPwaStandalone()) return false;
         if (isAuthPage()) return false;
-        if (!g.document.querySelector('.diari-shell-main')) return false;
         try {
             if (g.sessionStorage.getItem(SESSION_KEY) === '1') return false;
         } catch (_) {
             /* ignore */
         }
+        if (isSplashEntryPage()) return true;
+        if (!g.document.querySelector('.diari-shell-main')) return false;
         return true;
     }
 
@@ -102,6 +108,9 @@
         }
         overlayEl = null;
         resolveFinishWaiters();
+        if (isSplashEntryPage()) {
+            return;
+        }
         if (g.DiariShell && typeof g.DiariShell._completeRelease === 'function') {
             g.DiariShell._completeRelease();
         }
@@ -237,6 +246,9 @@
 
     async function runLaunchSequence() {
         finished = false;
+        if (isSplashEntryPage()) {
+            appReady = true;
+        }
         mountOverlayImmediately();
 
         const loadingMount = g.document.getElementById('diariPwaLaunchLoading');
@@ -295,6 +307,10 @@
     function boot() {
         if (!shouldRunLaunch()) {
             finished = true;
+            if (isSplashEntryPage()) {
+                appReady = true;
+                resolveFinishWaiters();
+            }
             return;
         }
         paintWhiteShell();
