@@ -16,19 +16,19 @@
   "categories": ["lifestyle", "health"],
   "icons": [
     {
-      "src": "/diariclogo.png",
+      "src": "/diariclogo-pwa-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/diariclogo.png",
+      "src": "/diariclogo-pwa-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/diariclogo.png",
+      "src": "/diariclogo-pwa-maskable.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -39,13 +39,13 @@
       "name": "Write entry",
       "short_name": "Write",
       "url": "/write-entry.html",
-      "icons": [{ "src": "/diariclogo.png", "sizes": "192x192", "type": "image/png" }]
+      "icons": [{ "src": "/diariclogo-pwa-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Dashboard",
       "short_name": "Home",
       "url": "/dashboard.html",
-      "icons": [{ "src": "/diariclogo.png", "sizes": "192x192", "type": "image/png" }]
+      "icons": [{ "src": "/diariclogo-pwa-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }
