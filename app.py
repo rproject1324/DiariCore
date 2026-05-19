@@ -2530,6 +2530,19 @@ def api_push_schedule_status():
     ), 200
 
 
+@app.route("/api/push/trigger-daily", methods=["POST"])
+def api_push_trigger_daily():
+    """PWA: send daily nudge now (tests real daily copy; skips if entry today)."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    if not push_service.push_configured():
+        return jsonify({"success": False, "error": "Web Push is not configured."}), 503
+    result = push_service.send_daily_reminder_to_user(user_id)
+    status = 200 if result.get("ok") else 400
+    return jsonify({"success": result.get("ok"), **result}), status
+
+
 @app.route("/api/push/test", methods=["POST"])
 def api_push_test():
     """PWA: send one test push immediately (logged-in user)."""
