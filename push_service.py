@@ -451,10 +451,7 @@ def dispatch_due_notifications() -> dict:
         prefs = _user_notification_prefs(user_id)
         state = dict(_user_push_state(user_id))
         state_dirty = False
-
-        if _has_entry_today_manila(entries):
-            skipped_entry_today += 1
-            continue
+        has_entry_today = _has_entry_today_manila(entries)
 
         reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
             _most_active_hour_hhmm(entries)
@@ -474,48 +471,53 @@ def dispatch_due_notifications() -> dict:
                         last_error = err
             return ok_any
 
-        if (
-            prefs["dailyEnabled"]
-            and reminder
-            and h == reminder[0]
-            and m == reminder[1]
-            and state.get("lastDailyReminderDateKey") != today_key
-        ):
-            if _push_all(
-                "A gentle journal nudge",
-                _build_daily_body(),
-                "/write-entry.html",
-            ):
-                state["lastDailyReminderDateKey"] = today_key
-                state_dirty = True
-
-        streak = _compute_streak(entries)
-        if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:
+        # Daily + streak: only when user has not journaled today (Manila).
+        if not has_entry_today:
             if (
-                h == 23
-                and m == 0
-                and state.get("lastStreak1hrDateKey") != today_key
+                prefs["dailyEnabled"]
+                and reminder
+                and h == reminder[0]
+                and m == reminder[1]
+                and state.get("lastDailyReminderDateKey") != today_key
             ):
                 if _push_all(
-                    "Your streak tonight",
-                    _build_streak_body("1hr", streak),
+                    "A gentle journal nudge",
+                    _build_daily_body(),
                     "/write-entry.html",
                 ):
-                    state["lastStreak1hrDateKey"] = today_key
-                    state_dirty = True
-            if (
-                h == 23
-                and m == 30
-                and state.get("lastStreak30minDateKey") != today_key
-            ):
-                if _push_all(
-                    "Before the day ends",
-                    _build_streak_body("30min", streak),
-                    "/write-entry.html",
-                ):
-                    state["lastStreak30minDateKey"] = today_key
+                    state["lastDailyReminderDateKey"] = today_key
                     state_dirty = True
 
+            streak = _compute_streak(entries)
+            if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:
+                if (
+                    h == 23
+                    and m == 0
+                    and state.get("lastStreak1hrDateKey") != today_key
+                ):
+                    if _push_all(
+                        "Your streak tonight",
+                        _build_streak_body("1hr", streak),
+                        "/write-entry.html",
+                    ):
+                        state["lastStreak1hrDateKey"] = today_key
+                        state_dirty = True
+                if (
+                    h == 23
+                    and m == 30
+                    and state.get("lastStreak30minDateKey") != today_key
+                ):
+                    if _push_all(
+                        "Before the day ends",
+                        _build_streak_body("30min", streak),
+                        "/write-entry.html",
+                    ):
+                        state["lastStreak30minDateKey"] = today_key
+                        state_dirty = True
+        else:
+            skipped_entry_today += 1
+
+        # Last-entry insight: own schedule (may fire after user wrote today or yesterday).
         if prefs["insightEnabled"] and entries:
             last = entries[0]
             if _should_fire_insight(state, last, today_key):
