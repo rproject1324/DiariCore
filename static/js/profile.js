@@ -2804,6 +2804,10 @@ function formatProfilePushStatusForPhone(data) {
         lines.push('Scheduler on server: ' + (data.scheduledDispatchActive ? 'running' : 'not started yet'));
         lines.push('Last server check: ' + (data.lastServerDispatchAt || '(none yet — wait 1–2 min)'));
     }
+    lines.push('');
+    lines.push(
+        'With app OPEN, an old local backup could show reminders. True closed-app push needs the app fully closed.'
+    );
     if (data.needsCron && typeof data.needsCron === 'string') {
         lines.push('');
         lines.push(data.needsCron);

@@ -101,6 +101,14 @@
             throw new Error(data.error || 'Subscribe failed');
         }
 
+        try {
+            global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+        } catch (_) {
+            /* ignore */
+        }
+        if (global.DiariPwaNotifications?.syncPrefsToWorker) {
+            void global.DiariPwaNotifications.syncPrefsToWorker();
+        }
         global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
         return true;
     }

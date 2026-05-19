@@ -1,5 +1,6 @@
 {
   "id": "/",
+  "gcm_sender_id": "103953800507",
   "name": "DiariCore",
   "short_name": "DiariCore",
   "description": "Your mindful journal — track emotions, write entries, and explore insights.",

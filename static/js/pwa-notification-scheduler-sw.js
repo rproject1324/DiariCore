@@ -170,8 +170,11 @@ async function runNotificationChecks() {
     const entries = Array.isArray(prefs.entries) ? prefs.entries : [];
     const reminder = parseHHmm(prefs.reminderHHmm || '09:00');
 
+  // When true Web Push is registered, daily reminders come from the server only
+  // (local checks only run while the app is open and were masking closed-app failures).
     if (
         prefs.dailyRemindersEnabled &&
+        !prefs.webPushActive &&
         reminder &&
         isInReminderWindow(h, m, reminder.h, reminder.m, REMINDER_WINDOW_MINUTES) &&
         prefs.lastDailyReminderDateKey !== todayKey &&

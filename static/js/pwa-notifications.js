@@ -125,8 +125,15 @@
         } catch (_) {
             /* ignore */
         }
+        let webPushActive = false;
+        try {
+            webPushActive = global.localStorage.getItem('diariCoreWebPushActive') === '1';
+        } catch (_) {
+            /* ignore */
+        }
         return {
             pwaOnly: true,
+            webPushActive,
             permission:
                 typeof Notification !== 'undefined' && Notification.permission
                     ? Notification.permission
@@ -270,6 +277,15 @@
     }
 
     function bindLifecycle() {
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'DIARI_PUSH_SUBSCRIPTION_CHANGE') {
+                    if (global.DiariPwaWebPush?.subscribeWebPush) {
+                        void global.DiariPwaWebPush.subscribeWebPush();
+                    }
+                }
+            });
+        }
         global.addEventListener('diari-entries-cache-updated', () => kickWorkerCheck());
         global.addEventListener('diari-remote-state-refreshed', () => kickWorkerCheck());
         global.addEventListener('visibilitychange', () => {
