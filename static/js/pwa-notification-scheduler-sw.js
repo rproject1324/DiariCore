@@ -258,49 +258,7 @@ async function runNotificationChecks() {
     }
 }
 
-self.addEventListener('push', (event) => {
-    let payload = { title: 'DiariCore', body: '', url: '/dashboard.html' };
-    try {
-        if (event.data) {
-            const parsed = event.data.json();
-            if (parsed && typeof parsed === 'object') payload = { ...payload, ...parsed };
-        }
-    } catch (_) {
-        /* ignore */
-    }
-    const notifTag = payload.tag || 'diari-web-push';
-    event.waitUntil(
-        self.registration
-            .showNotification(payload.title || 'DiariCore', {
-                body: payload.body || '',
-                tag: notifTag,
-                renotify: true,
-                icon: '/diariclogo.png',
-                badge: '/diariclogo.png',
-                vibrate: [200, 100, 200],
-                data: { url: payload.url || '/dashboard.html', tag: notifTag },
-            })
-            .catch(function (err) {
-                console.warn('[PWA SW] showNotification failed:', err);
-            })
-    );
-});
-
-self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    const url = event.notification?.data?.url || '/dashboard.html';
-    event.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-            for (const c of list) {
-                if ('focus' in c) {
-                    c.navigate(url);
-                    return c.focus();
-                }
-            }
-            if (self.clients.openWindow) return self.clients.openWindow(url);
-        })
-    );
-});
+/* push + notificationclick handlers live in /service-worker.js (always loaded) */
 
 self.addEventListener('message', (event) => {
     const data = event.data || {};

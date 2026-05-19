@@ -2775,6 +2775,16 @@ function formatProfilePushStatusForPhone(data) {
     lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
     lines.push('Already sent today: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
     lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
+    if (data.lastPushReceivedOnPhone && data.lastPushReceivedOnPhone.at) {
+        lines.push(
+            'Last push received ON THIS PHONE: ' +
+                (data.lastPushReceivedOnPhone.title || 'notification') +
+                ' at ' +
+                data.lastPushReceivedOnPhone.at
+        );
+    } else {
+        lines.push('Last push received ON THIS PHONE: (none logged yet)');
+    }
     if ((data.subscribedDevices ?? 0) > 1) {
         lines.push('');
         lines.push('⚠ More than one device is registered. Tap “Use this phone only” before testing.');
@@ -2828,6 +2838,35 @@ function initializeProfilePushStatusPanel() {
     profilePushStatusBound = true;
     const refreshBtn = document.getElementById('profilePushStatusRefresh');
     const resetBtn = document.getElementById('profilePushResetDaily');
+    const dailyTestBtn = document.getElementById('profilePushDailyTest');
+    if (dailyTestBtn) {
+        dailyTestBtn.addEventListener('click', async function () {
+            dailyTestBtn.disabled = true;
+            try {
+                const res = await fetch('/api/push/send-daily-test', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+                const data = await res.json().catch(() => ({}));
+                if (data.ok) {
+                    showNotification(
+                        'Daily nudge sent — fully close the app and watch for the banner.',
+                        'info',
+                        7000
+                    );
+                } else {
+                    showNotification(data.error || 'Daily test send failed.', 'warning', 5000);
+                }
+            } catch (_) {
+                showNotification('Daily test send failed.', 'warning', 5000);
+            } finally {
+                dailyTestBtn.disabled = false;
+                global.setTimeout(function () {
+                    void refreshProfilePushStatusPanel();
+                }, 3000);
+            }
+        });
+    }
     const thisPhoneBtn = document.getElementById('profilePushThisPhoneOnly');
     if (thisPhoneBtn) {
         thisPhoneBtn.addEventListener('click', async function () {

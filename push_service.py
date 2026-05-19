@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v12"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v13"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
@@ -484,6 +484,40 @@ def _mark_daily_reminder_sent(state: dict, today_key: str, reminder: tuple[int, 
     state["lastDailyReminderHhmm"] = hhmm
 
 
+def record_delivery_ack(user_id: int, data: dict) -> None:
+    """Service worker calls this when a Web Push is received on the device."""
+    state = dict(_user_push_state(user_id))
+    state["lastDeliveryAck"] = {
+        "at": (data.get("receivedAt") or datetime.now(timezone.utc).isoformat()),
+        "tag": str(data.get("tag") or ""),
+        "title": str(data.get("title") or ""),
+    }
+    _save_push_state(user_id, state)
+
+
+def send_daily_test_push_to_user(user_id: int) -> dict:
+    """Same payload/tag as the scheduled daily reminder (for closed-app testing)."""
+    uid = int(user_id)
+    if len(db.list_push_subscriptions_for_user(uid)) > 1:
+        db.prune_push_subscriptions_for_user(uid, max_keep=1)
+    subs = db.list_push_subscriptions_for_user(uid)
+    if not subs:
+        return {"ok": False, "error": "No push subscription. Tap Use this phone only."}
+    sub = subs[0]
+    ok, err = send_web_push(
+        sub,
+        "A gentle journal nudge",
+        _build_daily_body(),
+        "/write-entry.html",
+        tag="diari-daily-reminder",
+    )
+    return {
+        "ok": ok,
+        "error": err,
+        "hint": "Close the app completely, then wait a few seconds for the banner.",
+    }
+
+
 def clear_daily_reminder_state(user_id: int) -> None:
     """Allow a new reminder time to fire again the same day."""
     state = dict(_user_push_state(user_id))
@@ -523,7 +557,18 @@ def schedule_status_for_user(user_id: int) -> dict:
     )
     subs = db.list_push_subscriptions_for_user(user_id)
     devices = len(subs)
-    device_hints = [_endpoint_hint(s.get("endpoint") or "") for s in subs[:5]]
+    device_hints = [
+        _endpoint_hint(s.get("endpoint") or s.get("_endpoint") or "") for s in subs[:5]
+    ]
+    last_ack = state.get("lastDeliveryAck")
+    if isinstance(last_ack, dict):
+        last_ack_out = {
+            "at": last_ack.get("at"),
+            "title": last_ack.get("title"),
+            "tag": last_ack.get("tag"),
+        }
+    else:
+        last_ack_out = None
     sched = push_scheduler_health()
     internal_off = bool(sched.get("internalCronDisabled"))
     last_dispatch = sched.get("lastDispatchAt")
@@ -555,6 +600,7 @@ def schedule_status_for_user(user_id: int) -> dict:
             "POST /api/push/reset-daily-reminder clears this flag for testing."
         ),
         "subscribedDevices": devices,
+        "lastPushReceivedOnPhone": last_ack_out,
         "subscriptionDeviceHints": device_hints,
         "subscriptionWarning": (
             f"You have {devices} registered devices. Reminders may go to an old phone or browser tab. "
@@ -690,6 +736,7 @@ def send_web_push(
     except ImportError:
         return False, "pywebpush not installed on server"
     payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    ep_hint = _endpoint_hint(sub_info.get("endpoint") or "")
     try:
         # pywebpush treats str keys via Vapid.from_string (raw/der), not PEM — pass Vapid01 instance.
         webpush(
@@ -697,6 +744,11 @@ def send_web_push(
             data=payload,
             vapid_private_key=vapid,
             vapid_claims={"sub": vapid_claim_email()},
+            headers={"Urgency": "high", "TTL": "86400"},
+        )
+        print(
+            f"[diari-push-send] ok tag={tag} target={ep_hint}",
+            flush=True,
         )
         return True, None
     except WebPushException as ex:
@@ -715,8 +767,13 @@ def send_web_push(
                 False,
                 f"WebPush HTTP {code}: VAPID rejected — re-allow notifications in the installed PWA.",
             )
+        print(
+            f"[diari-push-send] FAIL tag={tag} target={ep_hint} code={code} {text or ex}",
+            flush=True,
+        )
         return False, f"WebPush HTTP {code}: {text or str(ex)}"
     except Exception as ex:
+        print(f"[diari-push-send] FAIL tag={tag} target={ep_hint} {ex}", flush=True)
         return False, str(ex)[:200]
 
 
@@ -923,7 +980,8 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                 fail_n = 0
                 last_ep = ""
                 for sub in target:
-                    last_ep = _endpoint_hint(sub.get("endpoint") or "")
+                    ep_raw = sub.get("endpoint") or sub.get("_endpoint") or ""
+                    last_ep = _endpoint_hint(ep_raw)
                     ok, err = send_web_push(
                         sub,
                         "A gentle journal nudge",

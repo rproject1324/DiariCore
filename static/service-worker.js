@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v66';
+const CACHE_NAME = 'diaricore-pwa-v67';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -55,6 +55,78 @@ const PRECACHE_URLS = [
     '/pwa-web-push.js',
     '/push-templates.json',
 ];
+
+/**
+ * Web Push display — registered here (not only in importScripts) so pushes still show
+ * when scheduler scripts fail to load or an older cached bundle is active.
+ */
+self.addEventListener('push', (event) => {
+    let payload = { title: 'DiariCore', body: '', url: '/write-entry.html', tag: 'diari-web-push' };
+    try {
+        if (event.data) {
+            const parsed = event.data.json();
+            if (parsed && typeof parsed === 'object') payload = { ...payload, ...parsed };
+        }
+    } catch (e) {
+        console.warn('[PWA SW] push payload parse failed:', e);
+    }
+    const notifTag = payload.tag || 'diari-web-push';
+    const title = payload.title || 'DiariCore';
+    const body = payload.body || '';
+    const url = payload.url || '/write-entry.html';
+
+    event.waitUntil(
+        (async () => {
+            try {
+                await fetch('/api/push/delivery-ack', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tag: notifTag,
+                        title,
+                        receivedAt: new Date().toISOString(),
+                    }),
+                });
+            } catch (e) {
+                console.warn('[PWA SW] delivery-ack failed:', e);
+            }
+            try {
+                await self.registration.showNotification(title, {
+                    body,
+                    tag: notifTag,
+                    renotify: true,
+                    requireInteraction: true,
+                    silent: false,
+                    icon: '/diariclogo.png',
+                    badge: '/diariclogo.png',
+                    vibrate: [300, 100, 300, 100, 300],
+                    data: { url, tag: notifTag },
+                });
+            } catch (e) {
+                console.warn('[PWA SW] showNotification failed:', e);
+            }
+        })()
+    );
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const url = event.notification?.data?.url || '/dashboard.html';
+    event.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+            for (const c of list) {
+                if ('focus' in c) {
+                    if ('navigate' in c) {
+                        return c.navigate(url).then(() => c.focus());
+                    }
+                    return c.focus();
+                }
+            }
+            if (self.clients.openWindow) return self.clients.openWindow(url);
+        })
+    );
+});
 
 try {
     importScripts(
