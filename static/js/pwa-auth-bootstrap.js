@@ -68,4 +68,4 @@
     if (!user && !isPublicAuth) {
         g.location.replace('login.html');
     }
-})();
+})(typeof window !== 'undefined' ? window : globalThis);
