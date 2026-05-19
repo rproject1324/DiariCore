@@ -2762,286 +2762,6 @@ function buildPushNotificationPrefsPayloadForServer() {
     };
 }
 
-function formatProfilePushStatusForPhone(data) {
-    if (!data || !data.success) {
-        return 'Could not load status. Check internet and try Refresh.';
-    }
-    const lines = [];
-    lines.push('Server time (Manila): ' + (data.manilaNow || '?'));
-    lines.push('Reminder server will use: ' + (data.reminderTimeUsed || '(not set)'));
-    lines.push('Your override saved: ' + (data.reminderTimeOverride || '(none — using default hour)'));
-    lines.push('Daily reminders on: ' + (data.dailyEnabled ? 'yes' : 'no'));
-    lines.push('Wrote entry today: ' + (data.hasEntryToday ? 'yes — no daily nudge today' : 'no'));
-    lines.push('Due right now (15 min window): ' + (data.dailyDueNow ? 'YES' : 'no'));
-    if (data.dailyDeliveryStatus === 'confirmed_on_phone') {
-        lines.push('Banner confirmed on phone today: yes');
-    } else if (data.dailyDeliveryStatus === 'sent_to_google_waiting_for_phone') {
-        lines.push('Banner confirmed on phone today: NO (Google has push, phone has not acked yet)');
-        if (data.pendingDailyReminder && data.pendingDailyReminder.attempts) {
-            lines.push('Server send attempts: ' + data.pendingDailyReminder.attempts);
-        }
-    } else {
-        lines.push('Banner confirmed on phone today: no');
-    }
-    lines.push('Legacy “already sent” flag: ' + (data.dailyAlreadySentToday ? 'yes' : 'no'));
-    lines.push('This account devices subscribed: ' + (data.subscribedDevices ?? 0));
-    if (data.deliveryMismatchWarning) {
-        lines.push('');
-        lines.push('⚠ ' + data.deliveryMismatchWarning);
-    }
-    if (data.criticalWarning) {
-        lines.push('');
-        lines.push('⚠ ' + data.criticalWarning);
-    }
-    if (data.lastPushReceivedOnPhone && data.lastPushReceivedOnPhone.at) {
-        lines.push(
-            'Last push received ON THIS PHONE: ' +
-                (data.lastPushReceivedOnPhone.title || 'notification') +
-                ' at ' +
-                data.lastPushReceivedOnPhone.at
-        );
-    } else {
-        lines.push('Last push received ON THIS PHONE: (none logged yet)');
-    }
-    if ((data.subscribedDevices ?? 0) > 1) {
-        lines.push('');
-        lines.push('⚠ More than one device is registered. Tap “Use this phone only” before testing.');
-    }
-    if (data.subscriptionWarning) {
-        lines.push('');
-        lines.push('⚠ ' + data.subscriptionWarning);
-    }
-    if (Array.isArray(data.subscriptionDeviceHints) && data.subscriptionDeviceHints.length) {
-        lines.push('Registered: ' + data.subscriptionDeviceHints.join(', '));
-    }
-    if (data.internalCronDisabled) {
-        lines.push('');
-        lines.push('⚠ Scheduler OFF on Railway (DISABLE_INTERNAL_PUSH_CRON).');
-        lines.push('Scheduled reminders will NOT fire until that is removed.');
-    } else {
-        lines.push('Scheduler on server: ' + (data.scheduledDispatchActive ? 'running' : 'not started yet'));
-        lines.push('Last server check: ' + (data.lastServerDispatchAt || '(none yet — wait 1–2 min)'));
-    }
-    if (data.lastClientDiagnostics && typeof data.lastClientDiagnostics === 'object') {
-        const c = data.lastClientDiagnostics;
-        lines.push('');
-        lines.push('Last register attempt on this phone:');
-        lines.push('  PWA detected: ' + (c.pwaStandalone ? 'yes' : 'no'));
-        lines.push('  Notifications: ' + (c.notificationPermission || '?'));
-        lines.push('  Display mode: ' + (c.displayMode || '?'));
-        if (c.error) lines.push('  Error: ' + c.error);
-        if (Array.isArray(c.steps) && c.steps.length) {
-            c.steps.forEach(function (step) {
-                lines.push('  ' + step);
-            });
-        }
-    }
-    lines.push('');
-    lines.push(
-        'With app OPEN, an old local backup could show reminders. True closed-app push needs the app fully closed.'
-    );
-    if (data.needsCron && typeof data.needsCron === 'string') {
-        lines.push('');
-        lines.push(data.needsCron);
-    }
-    return lines.join('\n');
-}
-
-let profilePushStatusBound = false;
-
-async function ensureDiariPwaWebPushReady(timeoutMs) {
-    if (window.DiariPwaWebPush?.syncPushSubscriptionToServer) {
-        return window.DiariPwaWebPush;
-    }
-    if (window.DiariPwaWebPush?.waitForReady) {
-        return window.DiariPwaWebPush.waitForReady(timeoutMs || 8000);
-    }
-    const max = timeoutMs || 8000;
-    const start = Date.now();
-    while (Date.now() - start < max) {
-        if (window.DiariPwaWebPush?.syncPushSubscriptionToServer) {
-            return window.DiariPwaWebPush;
-        }
-        await new Promise(function (r) {
-            setTimeout(r, 50);
-        });
-    }
-    return null;
-}
-
-async function autoRegisterPushFromProfile() {
-    if (!isPwaProfileContext()) return;
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    const push = await ensureDiariPwaWebPushReady(8000);
-    if (!push?.syncPushSubscriptionToServer) return;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            const result = await push.syncPushSubscriptionToServer();
-            if (result && result.ok && (result.subscribedDevices ?? 0) >= 1) {
-                return result;
-            }
-        } catch (e) {
-            console.warn('[profile] push auto-register attempt', attempt + 1, e);
-        }
-        await new Promise(function (r) {
-            setTimeout(r, 600);
-        });
-    }
-    return null;
-}
-
-async function refreshProfilePushStatusPanel() {
-    const panel = document.getElementById('profilePushStatusPanel');
-    const pre = document.getElementById('profilePushStatusText');
-    if (!panel || !pre) return;
-    if (!isPwaProfileContext()) {
-        panel.hidden = true;
-        return;
-    }
-    panel.hidden = false;
-    pre.textContent = 'Loading…';
-    try {
-        const push = await ensureDiariPwaWebPushReady(3000);
-        const runDiag = pre.dataset.forceDiag === '1';
-        delete pre.dataset.forceDiag;
-        const res = await fetch('/api/push/schedule-status', { credentials: 'same-origin' });
-        let data = await res.json().catch(() => ({}));
-        if (runDiag || (data.subscribedDevices ?? 0) < 1) {
-            if (push?.runPushDiagnostics) await push.runPushDiagnostics();
-            const res2 = await fetch('/api/push/schedule-status', { credentials: 'same-origin' });
-            data = await res2.json().catch(() => data);
-        }
-        pre.textContent = formatProfilePushStatusForPhone(data);
-    } catch (e) {
-        pre.textContent = 'Network error: ' + (e && e.message ? e.message : 'try again');
-    }
-}
-
-function initializeProfilePushStatusPanel() {
-    const panel = document.getElementById('profilePushStatusPanel');
-    if (!panel || profilePushStatusBound) return;
-    profilePushStatusBound = true;
-    const refreshBtn = document.getElementById('profilePushStatusRefresh');
-    const resetBtn = document.getElementById('profilePushResetDaily');
-    const dailyTestBtn = document.getElementById('profilePushDailyTest');
-    if (dailyTestBtn) {
-        dailyTestBtn.addEventListener('click', async function () {
-            dailyTestBtn.disabled = true;
-            try {
-                async function sendDailyTest() {
-                    const res = await fetch('/api/push/send-daily-test', {
-                        method: 'POST',
-                        credentials: 'same-origin',
-                    });
-                    return res.json().catch(() => ({}));
-                }
-                let data = await sendDailyTest();
-                if (
-                    !data.ok &&
-                    (data.needsResubscribe ||
-                        /expired|unsubscribed|use this phone only/i.test(String(data.error || '')))
-                ) {
-                    const push = await ensureDiariPwaWebPushReady(10000);
-                    if (push?.confirmPushOnThisPhone) {
-                        showNotification('Refreshing push registration on this phone…', 'info', 3000);
-                        await push.confirmPushOnThisPhone();
-                        data = await sendDailyTest();
-                    }
-                }
-                if (data.ok) {
-                    showNotification(
-                        'Daily nudge sent — fully close the app and watch for the banner.',
-                        'info',
-                        7000
-                    );
-                } else {
-                    showNotification(
-                        data.hint || data.error || 'Daily test send failed.',
-                        'warning',
-                        7000
-                    );
-                }
-            } catch (_) {
-                showNotification('Daily test send failed.', 'warning', 5000);
-            } finally {
-                dailyTestBtn.disabled = false;
-                global.setTimeout(function () {
-                    void refreshProfilePushStatusPanel();
-                }, 3000);
-            }
-        });
-    }
-    const thisPhoneBtn = document.getElementById('profilePushThisPhoneOnly');
-    if (thisPhoneBtn) {
-        thisPhoneBtn.addEventListener('click', async function () {
-            thisPhoneBtn.disabled = true;
-            try {
-                const push = await ensureDiariPwaWebPushReady(10000);
-                if (!push) {
-                    showNotification(
-                        'Push module not loaded. Close and reopen the app, then try again.',
-                        'warning',
-                        6000
-                    );
-                    return;
-                }
-                let result = { ok: false };
-                if (push.confirmPushOnThisPhone) {
-                    result = await push.confirmPushOnThisPhone();
-                } else if (push.registerThisPhoneOnly) {
-                    const reg = await push.registerThisPhoneOnly();
-                    result = { ok: !!reg.ok, message: reg.error };
-                }
-                if (result.ok) {
-                    showNotification(
-                        result.message ||
-                            'This phone is set for reminders. Tap “Test daily nudge now”, then close the app to verify.',
-                        result.soft ? 'info' : 'success',
-                        7000
-                    );
-                } else {
-                    const errMsg = result.error || 'Could not register push on this phone.';
-                    showNotification(errMsg, 'warning', 9000);
-                    const pre = document.getElementById('profilePushStatusText');
-                    if (pre && result.diagnostics) {
-                        pre.dataset.forceDiag = '1';
-                    }
-                }
-                await fetch('/api/push/reset-daily-reminder', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                });
-            } catch (e) {
-                showNotification('Setup failed — check notification permission.', 'warning', 5000);
-            } finally {
-                thisPhoneBtn.disabled = false;
-                void refreshProfilePushStatusPanel();
-            }
-        });
-    }
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', function () {
-            void refreshProfilePushStatusPanel();
-        });
-    }
-    if (resetBtn) {
-        resetBtn.addEventListener('click', async function () {
-            resetBtn.disabled = true;
-            try {
-                await fetch('/api/push/reset-daily-reminder', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                });
-                showNotification('Reset — you can test today’s reminder again.', 'info', 4000);
-            } catch (_) {
-                showNotification('Reset failed — check connection.', 'warning', 4000);
-            } finally {
-                resetBtn.disabled = false;
-                void refreshProfilePushStatusPanel();
-            }
-        });
-    }
-}
 
 async function syncPushNotificationPrefsToServerFromProfile() {
     try {
@@ -3084,7 +2804,6 @@ function initializeReminderTimePreference() {
             void window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }
         void syncPushNotificationPrefsToServerFromProfile();
-        void refreshProfilePushStatusPanel();
     }
     input.addEventListener('change', onReminderTimeChanged);
     input.addEventListener('input', onReminderTimeChanged);
@@ -3368,11 +3087,20 @@ function openProfileSection(sectionKey) {
         if (window.DiariPwaNotifications?.hydrateProfileNotificationUi) {
             window.DiariPwaNotifications.hydrateProfileNotificationUi();
         }
-        initializeProfilePushStatusPanel();
         void (async function () {
-            await autoRegisterPushFromProfile();
+            if (
+                isPwaProfileContext() &&
+                typeof Notification !== 'undefined' &&
+                Notification.permission === 'granted' &&
+                window.DiariPwaWebPush?.syncPushSubscriptionToServer
+            ) {
+                try {
+                    await window.DiariPwaWebPush.syncPushSubscriptionToServer();
+                } catch (_) {
+                    /* ignore */
+                }
+            }
             void syncPushNotificationPrefsToServerFromProfile();
-            await refreshProfilePushStatusPanel();
         })();
     }
     if (sectionKey === 'personal-information') {

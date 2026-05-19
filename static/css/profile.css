@@ -2699,55 +2699,6 @@ html.theme-dark .profile-security-status span {
         border-color: var(--primary-color);
     }
 
-    body.page-profile .profile-push-status {
-        margin-top: 1rem;
-        padding: 0.85rem 1rem;
-        border-radius: 0.65rem;
-        border: 1px solid var(--border-color, #e2e8e4);
-        background: var(--card-background, #f8faf9);
-    }
-
-    body.page-profile .profile-push-status__title {
-        font-size: 0.9rem;
-        font-weight: 600;
-        margin: 0 0 0.35rem;
-    }
-
-    body.page-profile .profile-push-status__hint {
-        font-size: 0.78rem;
-        color: var(--text-muted, #5c6b63);
-        margin: 0 0 0.65rem;
-        line-height: 1.35;
-    }
-
-    body.page-profile .profile-push-status__text {
-        font-size: 0.72rem;
-        line-height: 1.45;
-        white-space: pre-wrap;
-        word-break: break-word;
-        margin: 0 0 0.75rem;
-        padding: 0.5rem;
-        border-radius: 0.4rem;
-        background: rgba(0, 0, 0, 0.04);
-        max-height: 14rem;
-        overflow-y: auto;
-    }
-
-    html.theme-dark body.page-profile .profile-push-status {
-        border-color: var(--border-color, #2f3b42);
-        background: var(--card-background, #182126);
-    }
-
-    html.theme-dark body.page-profile .profile-push-status__text {
-        background: rgba(255, 255, 255, 0.05);
-    }
-
-    body.page-profile .profile-push-status__actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-    }
-    
     body.page-profile .appearance-item__row,
     body.page-profile .notifications-item__row {
         display: flex;
