@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-send-v3"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v4"
 
 
 def _load_templates() -> dict:
@@ -428,6 +428,86 @@ def _save_push_state(user_id: int, state: dict) -> None:
     db.merge_user_ui_preferences_json(user_id, {"pushState": state})
 
 
+def _daily_reminder_fired_today(state: dict, today_key: str, reminder: tuple[int, int]) -> bool:
+    """True if we already sent daily push for this calendar day at this reminder time."""
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+    last = state.get("lastDailyReminder")
+    if isinstance(last, dict):
+        return last.get("dateKey") == today_key and last.get("hhmm") == hhmm
+    # Legacy: only date key (reset when reminder time changes via preferences API).
+    if state.get("lastDailyReminderDateKey") == today_key:
+        legacy_hhmm = str(state.get("lastDailyReminderHhmm") or "").strip()
+        return not legacy_hhmm or legacy_hhmm == hhmm
+    return False
+
+
+def _mark_daily_reminder_sent(state: dict, today_key: str, reminder: tuple[int, int]) -> None:
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+    state["lastDailyReminder"] = {"dateKey": today_key, "hhmm": hhmm}
+    state["lastDailyReminderDateKey"] = today_key
+    state["lastDailyReminderHhmm"] = hhmm
+
+
+def clear_daily_reminder_state(user_id: int) -> None:
+    """Allow a new reminder time to fire again the same day."""
+    state = dict(_user_push_state(user_id))
+    for key in (
+        "lastDailyReminder",
+        "lastDailyReminderDateKey",
+        "lastDailyReminderHhmm",
+    ):
+        state.pop(key, None)
+    _save_push_state(user_id, state)
+
+
+def schedule_status_for_user(user_id: int) -> dict:
+    """What the cron dispatcher will use for this account (for debugging)."""
+    entries = _serialize_entries_for_user(user_id)
+    prefs = _user_notification_prefs(user_id)
+    reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
+        _most_active_hour_hhmm(entries)
+    )
+    now = _manila_now()
+    h, m = _manila_hm(now)
+    state = _user_push_state(user_id)
+    has_entry = _has_entry_today_manila(entries)
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
+    due_now = bool(
+        not has_entry
+        and prefs["dailyEnabled"]
+        and reminder
+        and h == reminder[0]
+        and m == reminder[1]
+        and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
+    )
+    grouped = db.list_push_subscriptions_grouped_by_user()
+    devices = len(grouped.get(int(user_id)) or [])
+    return {
+        "manilaNow": f"{h:02d}:{m:02d}",
+        "dateKey": _manila_date_key(now),
+        "reminderTimeOverride": prefs["reminderTimeOverride"],
+        "reminderTimeUsed": hhmm,
+        "reminderSource": (
+            "override"
+            if _parse_hhmm(prefs["reminderTimeOverride"])
+            else "most_active_hour"
+        ),
+        "dailyEnabled": prefs["dailyEnabled"],
+        "hasEntryToday": has_entry,
+        "dailyDueNow": due_now,
+        "dailyAlreadySentToday": (
+            _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
+            if reminder
+            else False
+        ),
+        "subscribedDevices": devices,
+        "needsCron": (
+            "POST /api/internal/push/dispatch every 1 minute (cron-job.org). "
+            "Test push works without cron; scheduled daily reminders do not."
+        ),
+    }
+
+
 def _pick(pool: list) -> str:
     if not pool:
         return ""
@@ -677,6 +757,7 @@ def dispatch_due_notifications() -> dict:
     errors = 0
     last_error = None
     skipped_entry_today = 0
+    daily_due_users = 0
 
     for user_id, subs in grouped.items():
         if not subs:
@@ -712,14 +793,15 @@ def dispatch_due_notifications() -> dict:
                 and reminder
                 and h == reminder[0]
                 and m == reminder[1]
-                and state.get("lastDailyReminderDateKey") != today_key
+                and not _daily_reminder_fired_today(state, today_key, reminder)
             ):
+                daily_due_users += 1
                 if _push_all(
                     "A gentle journal nudge",
                     _build_daily_body(),
                     "/write-entry.html",
                 ):
-                    state["lastDailyReminderDateKey"] = today_key
+                    _mark_daily_reminder_sent(state, today_key, reminder)
                     state_dirty = True
 
             streak = _compute_streak(entries)

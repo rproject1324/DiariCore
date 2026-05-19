@@ -322,6 +322,14 @@
             if (timeInput.dataset.pwaNotifyTimeBound !== '1') {
                 timeInput.dataset.pwaNotifyTimeBound = '1';
                 timeInput.addEventListener('change', () => {
+                    try {
+                        const v = timeInput.value;
+                        if (v && /^\d{2}:\d{2}$/.test(v)) {
+                            global.localStorage.setItem(REMINDER_OVERRIDE_KEY, v);
+                        }
+                    } catch (_) {
+                        /* ignore */
+                    }
                     void syncPrefsToWorker();
                     if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
                         void global.DiariPwaWebPush.syncNotificationPrefsToServer();

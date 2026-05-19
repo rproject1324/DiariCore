@@ -2501,9 +2501,24 @@ def api_push_preferences():
         patch["notifications"] = data["notifications"]
     if not patch:
         return jsonify({"success": False, "error": "Provide notifications object."}), 400
+    old_prefs = push_service._user_notification_prefs(user_id)
     if not db.merge_user_ui_preferences_json(user_id, patch):
         return jsonify({"success": False, "error": "Could not save preferences."}), 500
-    return jsonify({"success": True}), 200
+    new_prefs = push_service._user_notification_prefs(user_id)
+    if old_prefs.get("reminderTimeOverride") != new_prefs.get("reminderTimeOverride"):
+        push_service.clear_daily_reminder_state(user_id)
+    return jsonify({"success": True, "schedule": push_service.schedule_status_for_user(user_id)}), 200
+
+
+@app.route("/api/push/schedule-status", methods=["GET"])
+def api_push_schedule_status():
+    """PWA: show what time the server will use for daily reminders."""
+    user_id, auth_err = _require_authenticated_user()
+    if auth_err:
+        return auth_err
+    return jsonify(
+        {"success": True, **push_service.schedule_status_for_user(user_id)}
+    ), 200
 
 
 @app.route("/api/push/test", methods=["POST"])

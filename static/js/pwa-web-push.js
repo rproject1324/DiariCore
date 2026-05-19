@@ -122,8 +122,10 @@
 
     async function syncNotificationPrefsToServer() {
         if (!isPwaStandalone()) return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return;
+        }
         try {
-            if (global.localStorage.getItem(WEB_PUSH_ACTIVE_KEY) !== '1') return;
             await fetch('/api/push/preferences', {
                 method: 'POST',
                 credentials: 'same-origin',
