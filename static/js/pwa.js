@@ -18,10 +18,20 @@
         manifest.href = MANIFEST_HREF;
         head.appendChild(manifest);
 
-        const theme = document.createElement('meta');
-        theme.name = 'theme-color';
-        theme.content = THEME_COLOR;
-        head.appendChild(theme);
+        let theme = document.querySelector('meta[name="theme-color"]');
+        if (!theme) {
+            theme = document.createElement('meta');
+            theme.name = 'theme-color';
+            head.appendChild(theme);
+        }
+        try {
+            const primary = getComputedStyle(document.documentElement)
+                .getPropertyValue('--primary-color')
+                .trim();
+            theme.content = primary || THEME_COLOR;
+        } catch (_) {
+            theme.content = THEME_COLOR;
+        }
 
         const appleCapable = document.createElement('meta');
         appleCapable.name = 'apple-mobile-web-app-capable';
