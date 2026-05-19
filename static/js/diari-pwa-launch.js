@@ -11,6 +11,7 @@
     const SESSION_KEY = 'diariPwaLaunchDone';
     const MAX_WAIT_MS = 14000;
     const BRAND_SHOW_AT_PROGRESS = 0.38;
+    const BRAND_HOLD_MS = 2500;
 
     let finished = true;
     let finishWaiters = [];
@@ -159,6 +160,12 @@
         });
     }
 
+    function delay(ms) {
+        return new Promise(function (resolve) {
+            g.setTimeout(resolve, ms);
+        });
+    }
+
     function waitForComplete(anim) {
         return new Promise(function (resolve) {
             if (!anim) {
@@ -278,6 +285,7 @@
             const explosionData = await fetchAnimation(EXPLOSION_SRC);
             const explosionAnim = playLottie(explosionMount, explosionData, false);
             let brandShown = false;
+            let brandShownAt = 0;
             const showBrandAtFrame = Math.max(
                 1,
                 Math.floor(explosionAnim.totalFrames * BRAND_SHOW_AT_PROGRESS)
@@ -286,6 +294,7 @@
                 if (brandShown) return;
                 if (explosionAnim.currentFrame >= showBrandAtFrame) {
                     brandShown = true;
+                    brandShownAt = Date.now();
                     brandEl.classList.add('is-visible');
                 }
             });
@@ -294,6 +303,14 @@
                 explosionAnim.destroy();
             } catch (_) {
                 /* ignore */
+            }
+            if (brandShownAt) {
+                const remaining = BRAND_HOLD_MS - (Date.now() - brandShownAt);
+                if (remaining > 0) {
+                    await delay(remaining);
+                }
+            } else if (brandShown) {
+                await delay(BRAND_HOLD_MS);
             }
         } catch (e) {
             console.warn('[DiariPwaLaunch]', e);
@@ -314,12 +331,14 @@
             return;
         }
         paintWhiteShell();
-        if (g.document.body) {
+        function startLaunch() {
+            mountOverlayImmediately();
             void runLaunchSequence();
+        }
+        if (g.document.body) {
+            startLaunch();
         } else {
-            g.document.addEventListener('DOMContentLoaded', function () {
-                void runLaunchSequence();
-            });
+            g.document.addEventListener('DOMContentLoaded', startLaunch);
         }
     }
 

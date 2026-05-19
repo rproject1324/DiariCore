@@ -4,18 +4,59 @@
 (function () {
     'use strict';
 
-    /* PWA: white screen immediately so the install icon splash is not visible before loading bar. */
+    /* PWA: white screen + hide in-app chrome before launch overlay mounts (prevents dashboard flash). */
     (function paintPwaLaunchWhiteFirst() {
         try {
             var standalone =
                 (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
                 window.navigator.standalone === true;
             if (!standalone) return;
+            var path = String(window.location.pathname || '')
+                .replace(/\\/g, '/')
+                .toLowerCase();
+            var base = path.split('/').pop() || '';
+            var isAuth =
+                !path ||
+                path === '/' ||
+                base === '' ||
+                base === 'index.html' ||
+                base === 'login.html' ||
+                base === 'register.html' ||
+                base === 'verify-registration.html';
+            if (isAuth) return;
+            try {
+                if (window.sessionStorage.getItem('diariPwaLaunchDone') === '1') return;
+            } catch (_) {
+                /* ignore */
+            }
             var html = document.documentElement;
-            html.classList.add('diari-pwa-launch-pending');
+            html.classList.add('diari-pwa-launch-pending', 'diari-pwa-launch-active');
             html.style.backgroundColor = '#ffffff';
             if (document.body) {
                 document.body.style.backgroundColor = '#ffffff';
+            }
+            var head = document.head || html;
+            if (!document.getElementById('diari-pwa-launch-critical')) {
+                var critical = document.createElement('style');
+                critical.id = 'diari-pwa-launch-critical';
+                critical.textContent =
+                    'html.diari-pwa-launch-pending,html.diari-pwa-launch-pending body{background:#fff!important}' +
+                    'html.diari-pwa-launch-pending body>:not(.diari-pwa-launch){visibility:hidden!important;pointer-events:none!important}' +
+                    'html.diari-pwa-launch-pending .diari-pwa-launch{visibility:visible!important;pointer-events:auto!important}';
+                head.appendChild(critical);
+            }
+            if (head && !head.querySelector('[data-diari-pwa-launch-css]')) {
+                var link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = '/diari-pwa-launch.css';
+                link.dataset.diariPwaLaunchCss = '1';
+                head.appendChild(link);
+            }
+            if (head && !head.querySelector('[data-diari-pwa-launch-js]')) {
+                var launchScript = document.createElement('script');
+                launchScript.src = '/diari-pwa-launch.js';
+                launchScript.dataset.diariPwaLaunchJs = '1';
+                head.appendChild(launchScript);
             }
         } catch (_) {
             /* ignore */

@@ -10,6 +10,18 @@ html.diari-pwa-launch-active body {
     background: #ffffff !important;
 }
 
+/* Hide in-app UI until launch overlay is ready (prevents empty dashboard flash). */
+html.diari-pwa-launch-pending body > :not(.diari-pwa-launch) {
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+html.diari-pwa-launch-pending .diari-pwa-launch,
+html.diari-pwa-launch-active .diari-pwa-launch {
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
+
 html.diari-pwa-launch-active .mobile-app-topbar,
 html.diari-pwa-launch-active .floating-streak,
 html.diari-pwa-launch-active .dashboard-container,
