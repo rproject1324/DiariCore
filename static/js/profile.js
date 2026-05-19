@@ -7,6 +7,7 @@ function refreshProfileAfterPwaSync() {
     if (window.DiariTheme && typeof window.DiariTheme.syncToggleState === 'function') {
         window.DiariTheme.syncToggleState();
     }
+    applyPwaProfilePersonalOfflineState();
     refreshProfilePersonalSaveButton();
 }
 
@@ -15,8 +16,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     window.addEventListener('diari-remote-state-refreshed', refreshProfileAfterPwaSync);
     window.addEventListener('diari-user-updated', refreshProfileAfterPwaSync);
     window.addEventListener('offline', function () {
+        applyPwaProfilePersonalOfflineState();
         refreshProfilePersonalSaveButton();
     });
+    window.addEventListener('online', applyPwaProfilePersonalOfflineState);
+    window.addEventListener('diari-remote-state-refreshed', applyPwaProfilePersonalOfflineState);
     if (window.DiariOffline?.registerPageRefreshHandler) {
         window.DiariOffline.registerPageRefreshHandler(refreshProfileAfterPwaSync);
     }
@@ -38,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeStorageActions();
     initializeProfileSectionNavigation();
     initializeAccountDetailPanels();
+    applyPwaProfilePersonalOfflineState();
 });
 
 let profileSecPwLiveInst = null;
@@ -114,6 +119,33 @@ function isPwaOfflineForUserActionsSync() {
         return window.DiariOffline.isPwaOfflineNow();
     }
     return navigator.onLine === false;
+}
+
+const PROFILE_PERSONAL_OFFLINE_FIELD_IDS = [
+    'profileFieldFirstName',
+    'profileFieldLastName',
+    'profileFieldNickname',
+    'profileFieldEmail',
+    'profileFieldGender',
+    'profileFieldBirthday',
+];
+
+function applyPwaProfilePersonalOfflineState() {
+    if (!isPwaProfileContext()) return;
+    const form = document.querySelector(
+        '#profileSectionPersonalInfo .profile-account-detail-form'
+    );
+    const offline = isPwaOfflineForUserActionsSync();
+    if (form) {
+        form.classList.toggle('pwa-profile-personal-offline', offline);
+    }
+    PROFILE_PERSONAL_OFFLINE_FIELD_IDS.forEach(function (id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = offline;
+        el.setAttribute('aria-disabled', offline ? 'true' : 'false');
+    });
+    refreshProfilePersonalSaveButton();
 }
 
 function profilePersonalNicknameEmailChangedFromStored(user, nick, email) {
@@ -402,6 +434,7 @@ function hydratePersonalInfoPanel() {
     ].forEach(function (fid) {
         validateProfilePersonalField(fid);
     });
+    applyPwaProfilePersonalOfflineState();
     refreshProfilePersonalSaveButton();
 }
 
@@ -3166,6 +3199,7 @@ function openProfileSection(sectionKey) {
     }
     if (sectionKey === 'personal-information') {
         hydratePersonalInfoPanel();
+        applyPwaProfilePersonalOfflineState();
     }
     if (sectionKey === 'security') {
         clearSecurityForm();

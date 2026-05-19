@@ -57,6 +57,44 @@ function insightsChartActiveTipIndex(chart) {
     return active?.[0]?.index ?? -1;
 }
 
+/** Mobile/PWA: Chart.js legend lives on the canvas; capture-phase tap handler must not swallow legend clicks. */
+function insightsTryHandleChartLegendClick(chart, e) {
+    const legend = chart?.legend;
+    if (!legend?.legendHitBoxes?.length || !legend.legendItems?.length) return false;
+
+    let x;
+    let y;
+    if (typeof Chart !== 'undefined' && Chart.helpers?.getRelativePosition) {
+        const pos = Chart.helpers.getRelativePosition(e, chart);
+        x = pos.x;
+        y = pos.y;
+    } else {
+        const rect = chart.canvas.getBoundingClientRect();
+        const scaleX = chart.width / (rect.width || 1);
+        const scaleY = chart.height / (rect.height || 1);
+        x = (e.clientX - rect.left) * scaleX;
+        y = (e.clientY - rect.top) * scaleY;
+    }
+
+    const hitIndex = legend.legendHitBoxes.findIndex((box) =>
+        x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height
+    );
+    if (hitIndex < 0) return false;
+
+    const item = legend.legendItems[hitIndex];
+    const onClick = legend.options?.onClick;
+    if (typeof onClick === 'function') {
+        onClick(e, item, legend);
+    } else {
+        const idx = item.datasetIndex;
+        if (idx != null) {
+            chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+            chart.update();
+        }
+    }
+    return true;
+}
+
 /** Mobile: tap same bar again to dismiss; tap chart container padding to dismiss. */
 function insightsBarChartOnClick(chart, elements) {
     if (!chart || !insightsIsMobileChartUi()) return;
@@ -89,6 +127,7 @@ function bindInsightsMobileChartTapToggle(chart) {
 
     const handleTap = (e) => {
         if (!insightsIsMobileChartUi()) return;
+        if (insightsTryHandleChartLegendClick(chart, e)) return;
         e.preventDefault();
         e.stopPropagation();
         let elements = [];
@@ -301,7 +340,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (window.DiariOffline?.awaitServerState) {
         await window.DiariOffline.awaitServerState();
     } else {
-        await syncInsightsEntriesFromApi();
+    await syncInsightsEntriesFromApi();
     }
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();

@@ -148,13 +148,13 @@ html.theme-dark .pwa-install-banner__inner {
 /* PWA Profile — reminder time picker arrow inset from right edge */
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-    padding-right: 2.65rem;
+    padding-right: 3.35rem;
     text-align: center;
 }
 
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-    margin-right: 0.85rem;
+    margin-right: 1.35rem;
     margin-left: 0;
     cursor: pointer;
     opacity: 0.92;
@@ -200,6 +200,21 @@ html[data-diari-pwa='standalone'] body.page-profile .notifications-item--reminde
 html.diari-pwa-standalone body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline #toggleDailyReminders:disabled + .toggle-slider,
 html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notifications.pwa-notifications-offline #toggleDailyReminders:disabled + .toggle-slider {
     opacity: 0.5;
+}
+
+/* PWA Profile — personal info fields greyed out when offline */
+html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__input,
+html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__input,
+html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__select,
+html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field__select {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: not-allowed;
+}
+
+html.diari-pwa-standalone body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field,
+html[data-diari-pwa='standalone'] body.page-profile .profile-account-detail-form.pwa-profile-personal-offline .profile-account-field {
+    pointer-events: none;
 }
 
 /* PWA Profile — toasts use theme tokens (success reminder message) */
