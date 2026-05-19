@@ -2486,6 +2486,7 @@ def api_push_subscribe():
         pruned = db.delete_push_subscriptions_for_user_except(user_id, endpoint)
     if not db.upsert_push_subscription(user_id, sub, push_service.vapid_public_key()):
         return jsonify({"success": False, "error": "Could not save subscription."}), 500
+    push_service.clear_daily_push_retry_state(user_id)
     devices = len(db.list_push_subscriptions_for_user(user_id))
     print(
         f"[diari-push-subscribe] user={user_id} devices={devices} "

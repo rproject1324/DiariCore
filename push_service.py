@@ -20,11 +20,11 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v23"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v24"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
-DAILY_PUSH_MAX_ATTEMPTS = max(1, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "2")))
+DAILY_PUSH_MAX_ATTEMPTS = max(1, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "3")))
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "30"))
 )
@@ -669,6 +669,13 @@ def send_daily_test_push_to_user(user_id: int) -> dict:
     }
 
 
+def clear_daily_push_retry_state(user_id: int) -> None:
+    """Clear send/retry lockout after the phone re-registers (keeps confirmed ack if any)."""
+    state = dict(_user_push_state(user_id))
+    state.pop("pendingDailyReminder", None)
+    _save_push_state(user_id, state)
+
+
 def clear_daily_reminder_state(user_id: int) -> None:
     """Allow a new reminder time to fire again the same day."""
     state = dict(_user_push_state(user_id))
@@ -987,35 +994,30 @@ def send_web_push(
         if dead_sub and endpoint:
             fail_count = db.increment_push_subscription_fcm_failures(endpoint)
             recently = _subscription_recently_registered(subscription)
-            if recently or fail_count < PUSH_SUBSCRIPTION_MAX_FCM_FAILURES:
-                reason = (
-                    f"registered <{PUSH_SUBSCRIPTION_GRACE_SECONDS}s ago"
-                    if recently
-                    else f"fcm_fail={fail_count}/{PUSH_SUBSCRIPTION_MAX_FCM_FAILURES}"
-                )
+            if recently and fail_count < 2:
                 print(
                     f"[diari-push-send] FAIL tag={tag} target={ep_hint} "
-                    f"expired but kept ({reason})",
+                    f"expired but kept (registered <{PUSH_SUBSCRIPTION_GRACE_SECONDS}s, fcm_fail={fail_count})",
                     flush=True,
                 )
                 return (
                     False,
                     "Push not ready yet on this phone — open DiariCore from home screen for a few seconds.",
                 )
+            print(
+                f"[diari-push-send] FAIL tag={tag} target={ep_hint} "
+                f"expired subscription removed (recent={recently} fcm_fail={fail_count})",
+                flush=True,
+            )
             db.delete_push_subscription_by_endpoint(endpoint)
+            return (
+                False,
+                "Push registration on this phone expired. Reopen DiariCore from your home screen.",
+            )
         if code in (401, 403):
             return (
                 False,
                 f"WebPush HTTP {code}: VAPID rejected — tap Use this phone only in Profile.",
-            )
-        if dead_sub:
-            print(
-                f"[diari-push-send] FAIL tag={tag} target={ep_hint} expired subscription removed",
-                flush=True,
-            )
-            return (
-                False,
-                "Push registration on this phone expired. Tap “Use this phone only”, then try again.",
             )
         print(
             f"[diari-push-send] FAIL tag={tag} target={ep_hint} code={code} {msg}",

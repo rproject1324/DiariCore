@@ -69,12 +69,23 @@
         return out;
     }
 
+    function toKeyBytes(key) {
+        if (!key) return null;
+        if (key instanceof Uint8Array) return key;
+        if (key instanceof ArrayBuffer) return new Uint8Array(key);
+        if (key.buffer instanceof ArrayBuffer) {
+            return new Uint8Array(key.buffer, key.byteOffset || 0, key.byteLength);
+        }
+        return null;
+    }
+
     function subscriptionUsesVapidKey(sub, publicKeyB64) {
         if (!sub || !publicKeyB64) return false;
-        const appKey = sub.options && sub.options.applicationServerKey;
-        if (!appKey) return true;
+        const rawKey = sub.options && sub.options.applicationServerKey;
+        if (!rawKey) return true;
+        const appKey = toKeyBytes(rawKey);
         const expected = urlBase64ToUint8Array(publicKeyB64);
-        if (appKey.byteLength !== expected.byteLength) return false;
+        if (!appKey || appKey.byteLength !== expected.byteLength) return false;
         for (let i = 0; i < appKey.byteLength; i += 1) {
             if (appKey[i] !== expected[i]) return false;
         }
@@ -382,13 +393,9 @@
         });
         const endpoint = sub && sub.endpoint ? String(sub.endpoint) : '';
         const last = readLastSave();
-        if (
-            !force &&
-            endpoint &&
-            last &&
-            last.ep === endpoint &&
-            Date.now() - (last.at || 0) < SAVE_DEBOUNCE_MS
-        ) {
+        const sameEndpoint = endpoint && last && last.ep === endpoint;
+        const recentlySaved = sameEndpoint && Date.now() - (last.at || 0) < SAVE_DEBOUNCE_MS;
+        if (recentlySaved) {
             const serverDevices = await countServerDevices();
             if (serverDevices >= 1) {
                 return {
@@ -450,10 +457,10 @@
             }
             void ensureServerPushRegistration({
                 quiet: true,
-                maxAttempts: 3,
-                force: true,
+                maxAttempts: 2,
+                force: false,
             });
-        }, 12000);
+        }, 20000);
     }
 
     /**
