@@ -1,105 +1,180 @@
 /**
- * PWA-only notification copy (short phrases). Placeholders: {mood}, {insight}, {title}, {snippet}
+ * PWA-only notification copy — supportive, reflective tone (not diagnostic).
+ * Placeholders: {tone}, {insight}, {title}, {snippet}, {streak}
  */
 (function (global) {
     'use strict';
 
     const DAILY_REMINDER_TEMPLATES = [
-        'Your journal is waiting — even a few lines count today.',
-        'Take a quiet minute and jot down how today feels.',
-        'DiariCore reminder: capture today before the day slips away.',
-        'A short entry now can lighten the rest of your evening.',
-        'What stood out today? Your future self will thank you.',
-        'Pause and write — your streak-friendly moment is here.',
-        'Gentle nudge: open your diary and name one real thing from today.',
-        'Today deserves a line in your journal. Start small.',
-        'Your mindful journal is ready when you are.',
-        'Check in with yourself — a quick entry is enough.',
-        'Write the mood, not the novel. You’ve got this.',
-        'Reminder: your story today is worth saving.',
-        'Open DiariCore and let today leave a footprint.',
-        'One honest sentence can shift the whole day.',
-        'Time to reflect — your diary misses your voice.',
-        'Capture a win, a worry, or a wonder from today.',
-        'Your daily journal moment is here. Keep it simple.',
-        'Slow down for sixty seconds and write what’s true.',
-        'DiariCore: today’s page is still blank. Fill it gently.',
-        'A little journaling now beats a perfect entry never.',
-        'What are you carrying today? Put it on the page.',
-        'Your reflection habit starts with showing up — now works.',
-        'Note one feeling from today. That counts as journaling.',
-        'Evening check-in: how did today actually go?',
-        'Morning pages or night notes — either way, write today.',
-        'Your consistency grows one entry at a time. Today’s turn.',
-        'Don’t overthink it — open Write Entry and start.',
-        'Reminder from DiariCore: your inner weather changes; log it.',
-        'A blank entry is still progress. Begin with one word.',
-        'You set this time because journaling helps — honor that.',
+        'Whenever you’re ready, a few honest lines can help today feel a little clearer.',
+        'No pressure — your journal is here if you want a quiet moment to reflect.',
+        'A gentle check-in with yourself might feel good. Even one sentence is enough.',
+        'If today had a lot in it, writing a little may help you unwind.',
+        'Your diary is open when you are. Take your time.',
+        'Consider jotting one thing you noticed today — small counts.',
+        'A soft reminder: you deserve a calm moment to process the day.',
+        'If it fits your evening, a short entry can be a kind pause.',
+        'You don’t need the perfect words — just what feels true right now.',
+        'Today can still hold a line in your journal, at your own pace.',
+        'When you have a minute, naming one feeling or thought may help.',
+        'Your reflection space is here — no rush, no rules.',
+        'A little writing might help you land after a full day.',
+        'If you’d like to check in, DiariCore is ready for something small.',
+        'One gentle note about today could be enough.',
+        'You chose journaling to support yourself — this is a friendly nudge.',
+        'Pause if you can; your future self may appreciate a few words.',
+        'Whatever today brought, your journal can hold it without judgment.',
+        'A brief entry might help you notice what mattered most today.',
+        'You’re allowed to keep it simple — a mood, a moment, or a breath.',
+        'If writing helps you reset, today’s page is still here.',
+        'Consider a quiet minute before the day fully fades.',
+        'Your story today matters — capture it in whatever way feels right.',
+        'No need for length; presence in your journal is what counts.',
+        'A supportive nudge: reflect when it feels okay for you.',
+        'Let today leave a small footprint if you’d like — you’re in charge.',
+        'Your mindful journal companion — here when you want to write.',
+        'If your mind is busy, putting one thing on the page may ease it.',
+        'Honor your rhythm; a short check-in still supports your habit.',
+        'Today’s chapter can start with a single line, whenever you’re ready.',
+    ];
+
+    const STREAK_REMINDER_1HR_TEMPLATES = [
+        'About an hour left today — a short entry could help keep your {streak}-day streak.',
+        'Your {streak}-day streak is still within reach tonight. One small note may be enough.',
+        'Friendly heads-up: journaling before midnight can protect your {streak}-day streak.',
+        'If you’d like to keep your {streak}-day rhythm, there’s still time for a gentle entry.',
+        'An hour before the day ends — your streak may appreciate a quick check-in.',
+        'No stress — but a brief write tonight could carry your {streak}-day streak forward.',
+        'Your consistency ({streak} days) is worth a soft effort before the day closes.',
+        'Still time tonight to nourish your {streak}-day journaling streak.',
+        'A calm reminder: one entry before midnight can hold your {streak}-day streak.',
+        'You’ve built {streak} days of showing up — tonight can be another kind step.',
+        'Before the day turns over, a few lines may keep your streak steady.',
+        'Your streak ({streak} days) doesn’t need perfection — just a small presence today.',
+        'If it feels right, write a little in the next hour to stay on track.',
+        'An hour remains — your journal is here to help protect your {streak}-day streak.',
+        'You’ve been caring for your habit ({streak} days). Tonight can be light and brief.',
+        'A supportive nudge: your streak may still count today with a short entry.',
+        'The day isn’t over — your {streak}-day streak can continue with one honest line.',
+        'Whenever you’re ready in the next hour, your streak will thank you gently.',
+        'Your {streak}-day path is still open tonight. No pressure, just an invitation.',
+        'A little reflection before midnight may keep your streak ({streak} days) alive.',
+        'You’ve shown up {streak} days in a row — tonight can be simple if you choose.',
+        'Still room for a kind check-in and your {streak}-day streak.',
+        'One hour left — consider a soft entry to stay connected to your streak.',
+        'Your habit matters ({streak} days). A brief note tonight could be enough.',
+        'Before midnight, even a sentence may support your {streak}-day streak.',
+        'Gentle reminder: your streak is at {streak} days — tonight still counts.',
+        'If today slipped by, a quick journal moment may preserve your streak.',
+        'Your {streak}-day streak is a gift you’ve been giving yourself — one more line?',
+        'An hour to go — write only if it feels supportive, not obligatory.',
+        'You’re allowed a small entry tonight to keep your {streak}-day streak going.',
+    ];
+
+    const STREAK_REMINDER_30MIN_TEMPLATES = [
+        'Thirty minutes before midnight — a brief entry could keep your {streak}-day streak.',
+        'Almost the end of the day. If you’d like, a short note may save your {streak}-day streak.',
+        'Half an hour left — your journal is here for a quick, gentle check-in.',
+        'Your {streak}-day streak can still continue tonight with something small.',
+        'A soft last call: one line before midnight may hold your streak ({streak} days).',
+        'No guilt — just care. A tiny entry might protect your {streak}-day streak.',
+        'The day is closing soon. Your streak ({streak} days) may still welcome you.',
+        'If you want to keep your {streak}-day rhythm, a minute of writing may help.',
+        'Thirty minutes remain — consider one honest sentence for your streak.',
+        'Your habit ({streak} days) doesn’t need much tonight — only your presence.',
+        'Before the clock turns, a calm entry could support your {streak}-day streak.',
+        'Still time for a kind check-in — your {streak}-day streak is within reach.',
+        'A brief reflection now may be enough for your streak to count today.',
+        'You’ve nurtured {streak} days of journaling — tonight can stay gentle.',
+        'Almost midnight — write if it feels safe and supportive, not forced.',
+        'Your streak ({streak} days) is waiting patiently for a small sign from you.',
+        'Last soft nudge: one note tonight may keep your {streak}-day streak.',
+        'Thirty minutes to go — your diary is open for whatever feels true.',
+        'If today was full, one line still counts for your {streak}-day streak.',
+        'You deserve kindness, not pressure — but your streak may love a short entry.',
+        'The day’s last window: protect your {streak}-day streak with something brief.',
+        'Your {streak}-day path can continue with a whisper of writing tonight.',
+        'Half an hour before a new day — your journal companion is here.',
+        'A small moment now may keep {streak} days of care alive.',
+        'Before midnight passes, consider one feeling or thought on the page.',
+        'Your streak ({streak} days) isn’t about perfection — just showing up.',
+        'If you can, a quick entry may ease tomorrow and hold your streak.',
+        'Thirty minutes left — take only what feels emotionally safe to write.',
+        'You’ve come {streak} days — tonight can be one more gentle step if you choose.',
+        'Almost there — a short entry may be all your streak needs tonight.',
     ];
 
     const INSIGHT_HIGH = [
-        'You’ve been leaning {mood} lately. {insight}',
-        'Today’s tone feels brighter ({mood}). {insight}',
-        'Your last entry carried {mood} energy. {insight}',
-        'Nice momentum — mood: {mood}. {insight}',
-        '“{title}” — you sounded {mood}. {insight}',
+        'Your recent writing has {tone}. {insight}',
+        'Something in your last entry felt {tone}. {insight}',
+        '“{title}” may carry {tone}. {insight}',
+        'There’s {tone} in what you shared lately. {insight}',
+        'Your journal lately suggests {tone}. {insight}',
     ];
 
     const INSIGHT_MID = [
-        'You seem fairly steady ({mood}). {insight}',
-        'Today’s mood reads {mood}. {insight}',
-        'From “{title}”: a {mood} check-in. {insight}',
-        'Balanced day so far ({mood}). {insight}',
-        'Your journal shows {mood} — {insight}',
+        'Your last note seemed {tone}. {insight}',
+        'From “{title}”, there’s {tone}. {insight}',
+        'What you wrote recently felt {tone}. {insight}',
+        'Your latest entry may reflect {tone}. {insight}',
+        'A recent check-in sounded {tone}. {insight}',
     ];
 
     const INSIGHT_LOW = [
-        'You’ve been carrying {mood} lately. {insight}',
-        'Your last entry felt {mood}. {insight}',
-        '“{snippet}” — sounds {mood}. {insight}',
-        'Heavy days happen ({mood}). {insight}',
-        'Be gentle with yourself; mood: {mood}. {insight}',
+        'Your recent entry may feel {tone}. {insight}',
+        'What you shared in “{snippet}” could be {tone}. {insight}',
+        'Lately your writing seems {tone}. {insight}',
+        'Your last reflection might hold {tone}. {insight}',
+        'There may be {tone} in your recent journal. {insight}',
     ];
 
     const INSIGHT_NEUTRAL = [
-        'Your last entry is in — ready for another line? {insight}',
-        'You wrote about “{title}”. {insight}',
-        'Journal check-in: {insight}',
-        'Still thinking about today? {insight}',
-        'Your diary has room for more. {insight}',
+        'You checked in recently — {insight}',
+        'After “{title}”, {insight}',
+        'Your journal has space for more whenever you’re ready. {insight}',
+        'Following your last note: {insight}',
+        'A gentle follow-up on your writing: {insight}',
     ];
 
     const INSIGHT_PHRASES_HIGH = [
-        'Keep the routines that are working.',
-        'Ride this positive rhythm while it lasts.',
-        'A short gratitude note could anchor the day.',
-        'You’re building healthy emotional momentum.',
-        'Celebrate the small wins you logged.',
+        'Notice what’s been supporting you and consider naming it.',
+        'A small gratitude line might feel grounding today.',
+        'You might build on what’s been working, at your own pace.',
+        'Celebrate one quiet win if that feels right.',
+        'Let the good moments have a place on the page.',
     ];
 
     const INSIGHT_PHRASES_MID = [
-        'A brief pause and write can keep you grounded.',
-        'One intentional check-in may help today.',
-        'Small habits nudge the tone upward.',
-        'Name one feeling and one need — that’s enough.',
-        'Stay curious about what today needs.',
+        'A brief pause to write may help you feel steadier.',
+        'One feeling and one need can be enough to explore.',
+        'Stay curious about what would feel supportive today.',
+        'You might add how the day shifted since your last entry.',
+        'A short check-in could help you feel more centered.',
     ];
 
     const INSIGHT_PHRASES_LOW = [
-        'Try a short breath-and-write reset.',
-        'One gentle step of self-support can help.',
-        'You don’t have to fix it — just name it.',
-        'Keep today light; one manageable step is enough.',
-        'Your journal is a safe place for the hard stuff.',
+        'Be as gentle with yourself as you would with a friend.',
+        'You don’t have to fix anything — noticing can be enough.',
+        'A few breaths and one honest line may feel caring.',
+        'Your journal is a safe place for whatever is present.',
+        'One small step of self-kindness might help tonight.',
     ];
 
     const INSIGHT_PHRASES_NEUTRAL = [
-        'Add a line about how the day shifted since then.',
-        'Capture what you notice right now.',
-        'Even a sentence keeps the habit alive.',
-        'Your future self likes honest notes.',
-        'Reflect before the day fully fades.',
+        'Add a line about how things feel right now, if you’d like.',
+        'Even a sentence keeps your reflection habit warm.',
+        'Capture what stands out before the day moves on.',
+        'Your future self may appreciate an honest update.',
+        'Write only what feels emotionally safe to share.',
     ];
+
+    const TONE_BY_MOOD = {
+        happy: 'a lighter or uplifted quality',
+        sad: 'emotionally heavy or tender',
+        angry: 'strong feelings that may reflect frustration',
+        anxious: 'tension that may indicate stress',
+        neutral: 'a calm, even-keeled quality',
+    };
 
     function pickRandom(arr) {
         if (!arr || !arr.length) return '';
@@ -121,8 +196,19 @@
         return 'mid';
     }
 
+    function reflectiveTone(moodRaw) {
+        const m = String(moodRaw || 'neutral').toLowerCase();
+        return TONE_BY_MOOD[m] || 'mixed or shifting feelings';
+    }
+
     function buildDailyReminderBody() {
         return pickRandom(DAILY_REMINDER_TEMPLATES);
+    }
+
+    function buildStreakReminderBody(phase, streak) {
+        const n = Math.max(1, Number(streak) || 1);
+        const pool = phase === '30min' ? STREAK_REMINDER_30MIN_TEMPLATES : STREAK_REMINDER_1HR_TEMPLATES;
+        return fillTemplate(pickRandom(pool), { streak: String(n) });
     }
 
     function buildInsightNotificationBody(vars) {
@@ -143,21 +229,21 @@
             phrasePool = INSIGHT_PHRASES_MID;
         }
         const insight = vars.insight || pickRandom(phrasePool);
-        const moodLabel =
-            vars.moodLabel ||
-            (vars.mood ? String(vars.mood).charAt(0).toUpperCase() + String(vars.mood).slice(1) : 'Neutral');
+        const tone = vars.tone || reflectiveTone(vars.mood);
         return fillTemplate(pickRandom(pool), {
-            mood: moodLabel.toLowerCase(),
+            tone,
             insight,
-            title: vars.title || 'your last entry',
-            snippet: vars.snippet || vars.title || 'your last note',
+            title: vars.title || 'your recent entry',
+            snippet: vars.snippet || vars.title || 'your recent note',
         });
     }
 
     global.DiariPwaNotificationTemplates = {
         buildDailyReminderBody,
+        buildStreakReminderBody,
         buildInsightNotificationBody,
         pickRandom,
         moodBucket,
+        reflectiveTone,
     };
 })(typeof window !== 'undefined' ? window : self);

@@ -8,6 +8,7 @@
     const REMINDER_OVERRIDE_KEY = 'diariCoreReminderTimeUserOverride';
     const DAILY_ENABLED_KEY = 'diariCorePwaDailyRemindersEnabled';
     const INSIGHT_ENABLED_KEY = 'diariCorePwaInsightFollowupsEnabled';
+    const STREAK_ENABLED_KEY = 'diariCorePwaStreakRemindersEnabled';
     const PERMISSION_ASKED_KEY = 'diariCorePwaNotificationsPermissionAsked';
 
     const NOTIFY_TZ = 'Asia/Manila';
@@ -83,6 +84,16 @@
         }
     }
 
+    function isStreakRemindersEnabled() {
+        try {
+            const v = global.localStorage.getItem(STREAK_ENABLED_KEY);
+            if (v === '0' || v === 'false') return false;
+            return true;
+        } catch (_) {
+            return true;
+        }
+    }
+
     function setDailyRemindersEnabled(on) {
         try {
             global.localStorage.setItem(DAILY_ENABLED_KEY, on ? '1' : '0');
@@ -103,10 +114,14 @@
         let lastDaily = '';
         let lastInsightId = '';
         let lastInsightDate = '';
+        let lastStreak1hr = '';
+        let lastStreak30min = '';
         try {
             lastDaily = global.localStorage.getItem('diariCorePwaLastDailyReminderDateKey') || '';
             lastInsightId = global.localStorage.getItem('diariCorePwaLastInsightEntryId') || '';
             lastInsightDate = global.localStorage.getItem('diariCorePwaLastInsightDateKey') || '';
+            lastStreak1hr = global.localStorage.getItem('diariCorePwaLastStreak1hrDateKey') || '';
+            lastStreak30min = global.localStorage.getItem('diariCorePwaLastStreak30minDateKey') || '';
         } catch (_) {
             /* ignore */
         }
@@ -118,11 +133,14 @@
                     : 'default',
             dailyRemindersEnabled: isDailyRemindersEnabled(),
             insightFollowupsEnabled: isInsightFollowupsEnabled(),
+            streakRemindersEnabled: isStreakRemindersEnabled(),
             reminderHHmm: getEffectiveReminderHHmm(),
             entries: readEntries(),
             lastDailyReminderDateKey: lastDaily,
             lastInsightEntryId: lastInsightId,
             lastInsightDateKey: lastInsightDate,
+            lastStreak1hrDateKey: lastStreak1hr,
+            lastStreak30minDateKey: lastStreak30min,
             updatedAt: new Date().toISOString(),
         };
     }
@@ -144,6 +162,12 @@
                 if (existing.lastInsightDateKey) {
                     prefs.lastInsightDateKey = existing.lastInsightDateKey;
                 }
+                if (existing.lastStreak1hrDateKey) {
+                    prefs.lastStreak1hrDateKey = existing.lastStreak1hrDateKey;
+                }
+                if (existing.lastStreak30minDateKey) {
+                    prefs.lastStreak30minDateKey = existing.lastStreak30minDateKey;
+                }
             }
             await idb.writePrefs(prefs);
             try {
@@ -158,6 +182,12 @@
                 }
                 if (prefs.lastInsightDateKey) {
                     global.localStorage.setItem('diariCorePwaLastInsightDateKey', prefs.lastInsightDateKey);
+                }
+                if (prefs.lastStreak1hrDateKey) {
+                    global.localStorage.setItem('diariCorePwaLastStreak1hrDateKey', prefs.lastStreak1hrDateKey);
+                }
+                if (prefs.lastStreak30minDateKey) {
+                    global.localStorage.setItem('diariCorePwaLastStreak30minDateKey', prefs.lastStreak30minDateKey);
                 }
             } catch (_) {
                 /* ignore */
@@ -317,6 +347,7 @@
         setDailyRemindersEnabled,
         isInsightFollowupsEnabled,
         setInsightFollowupsEnabled,
+        isStreakRemindersEnabled,
         requestPermissionIfNeeded,
         syncPrefsToWorker,
         startScheduler,

@@ -8,6 +8,12 @@
 const NOTIFY_TZ = 'Asia/Manila';
 const CHECK_TAG_DAILY = 'diari-pwa-daily-reminder';
 const CHECK_TAG_INSIGHT = 'diari-pwa-insight-followup';
+const CHECK_TAG_STREAK_1HR = 'diari-pwa-streak-1hr';
+const CHECK_TAG_STREAK_30MIN = 'diari-pwa-streak-30min';
+
+/** Asia/Manila — one hour and thirty minutes before local midnight. */
+const STREAK_1HR_BEFORE_MIDNIGHT = { h: 23, m: 0 };
+const STREAK_30MIN_BEFORE_MIDNIGHT = { h: 23, m: 30 };
 
 function manilaDateKey(d) {
     return new Intl.DateTimeFormat('en-CA', {
@@ -61,6 +67,18 @@ function sortEntries(entries) {
 function hasEntryToday(entries) {
     const today = manilaDateKey(new Date());
     return sortEntries(entries).some((e) => entryDayKeyManila(e.date || e.createdAt) === today);
+}
+
+function computeStreakCount(entries) {
+    try {
+        const ds = self.DiariStreak;
+        if (ds && typeof ds.computeEntryStreak === 'function') {
+            return ds.computeEntryStreak(entries || []).streak || 0;
+        }
+    } catch (_) {
+        /* ignore */
+    }
+    return 0;
 }
 
 function getLastEntry(entries) {
@@ -153,7 +171,7 @@ async function runNotificationChecks() {
         const body = tpl.buildDailyReminderBody();
         const ok = await showLocalNotification(
             registration,
-            'Time to journal',
+            'A gentle journal nudge',
             body,
             CHECK_TAG_DAILY,
             '/write-entry.html'
@@ -164,19 +182,61 @@ async function runNotificationChecks() {
         }
     }
 
+    const streakRemindersOn =
+        prefs.streakRemindersEnabled !== false &&
+        (prefs.dailyRemindersEnabled !== false);
+    if (streakRemindersOn && !hasEntryToday(entries)) {
+        const streak = computeStreakCount(entries);
+        if (streak > 0 && typeof tpl.buildStreakReminderBody === 'function') {
+            if (
+                isSameMinute(h, m, STREAK_1HR_BEFORE_MIDNIGHT.h, STREAK_1HR_BEFORE_MIDNIGHT.m) &&
+                prefs.lastStreak1hrDateKey !== todayKey
+            ) {
+                const body1 = tpl.buildStreakReminderBody('1hr', streak);
+                const ok1 = await showLocalNotification(
+                    registration,
+                    'Your streak tonight',
+                    body1,
+                    CHECK_TAG_STREAK_1HR,
+                    '/write-entry.html'
+                );
+                if (ok1) {
+                    prefs.lastStreak1hrDateKey = todayKey;
+                    await idb.writePrefs(prefs);
+                }
+            }
+            if (
+                isSameMinute(h, m, STREAK_30MIN_BEFORE_MIDNIGHT.h, STREAK_30MIN_BEFORE_MIDNIGHT.m) &&
+                prefs.lastStreak30minDateKey !== todayKey
+            ) {
+                const body2 = tpl.buildStreakReminderBody('30min', streak);
+                const ok2 = await showLocalNotification(
+                    registration,
+                    'Before the day ends',
+                    body2,
+                    CHECK_TAG_STREAK_30MIN,
+                    '/write-entry.html'
+                );
+                if (ok2) {
+                    prefs.lastStreak30minDateKey = todayKey;
+                    await idb.writePrefs(prefs);
+                }
+            }
+        }
+    }
+
     const lastEntry = getLastEntry(entries);
     if (shouldFireInsightFollowup(prefs, lastEntry)) {
         const mood = resolveFeeling(lastEntry);
-        const moodLabel = mood.charAt(0).toUpperCase() + mood.slice(1);
         const body = tpl.buildInsightNotificationBody({
             mood,
-            moodLabel,
+            tone: tpl.reflectiveTone ? tpl.reflectiveTone(mood) : undefined,
             title: entryTitleSnippet(lastEntry),
             snippet: entryTitleSnippet(lastEntry),
         });
         const ok = await showLocalNotification(
             registration,
-            'Reflection on your last entry',
+            'Following up on your journal',
             body,
             CHECK_TAG_INSIGHT + '-' + String(lastEntry.id),
             '/entries.html'
