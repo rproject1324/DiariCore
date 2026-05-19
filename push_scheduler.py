@@ -76,14 +76,17 @@ def start(worker_id: int | None = None) -> None:
                 }
                 extra = ""
                 if result.get("dailyDueUsers"):
-                    ud = (result.get("userDebug") or [])[:1]
-                    if ud:
-                        u0 = ud[0]
-                        extra = (
-                            f" user={u0.get('userId')} pushOk={u0.get('dailyPushOk')} "
-                            f"pushFail={u0.get('dailyPushFail')} skip={u0.get('dailySkipReason')} "
-                            f"devices={u0.get('devices')} target={u0.get('dailyPushTarget', '')}"
+                    ud = [u for u in (result.get("userDebug") or []) if u.get("dailyFiring") or u.get("inReminderWindow")]
+                    if not ud:
+                        ud = (result.get("userDebug") or [])[:3]
+                    parts = []
+                    for u0 in ud[:5]:
+                        parts.append(
+                            f"u{u0.get('userId')}@{u0.get('reminderTimeUsed') or '?'}"
+                            f":ok={u0.get('dailyPushOk')} fail={u0.get('dailyPushFail')}"
+                            f" skip={u0.get('dailySkipReason')}"
                         )
+                    extra = " | " + "; ".join(parts) if parts else ""
                 print(
                     "[diari-push-cron] "
                     f"manila={result.get('manilaTime')} sent={result.get('sent')} "

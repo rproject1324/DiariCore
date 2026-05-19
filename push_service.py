@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v20"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v21"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
@@ -1244,6 +1244,12 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                 dbg["alreadyConfirmedOnPhone"] = _daily_reminder_confirmed_on_phone(
                     state, today_key, reminder
                 )
+                rem_hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+                print(
+                    f"[diari-push-daily] user={user_id} reminder={rem_hhmm} "
+                    f"devices={len(subs)} send={should_send} skip={skip_reason}",
+                    flush=True,
+                )
                 if should_send:
                     dbg["dailyFiring"] = True
                     target = subs[:1]
@@ -1291,6 +1297,11 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                         dbg["dailyPushHint"] = (
                             "Push failed for this device — open the PWA and tap Use this phone only."
                         )
+                    print(
+                        f"[diari-push-daily] user={user_id} result ok={ok_n} fail={fail_n} "
+                        f"target={last_ep}",
+                        flush=True,
+                    )
 
             streak = _compute_streak(entries)
             if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:

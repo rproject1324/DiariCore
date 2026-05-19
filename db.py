@@ -2129,25 +2129,42 @@ def list_push_subscriptions_for_user(user_id: int) -> list[dict]:
         conn.close()
 
 
+def delete_push_subscriptions_for_user_except(user_id: int, keep_endpoint: str) -> int:
+    """Remove every push row for this user except the current device endpoint."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return 0
+    keep = str(keep_endpoint or "").strip()
+    if not keep:
+        return 0
+    subs = list_push_subscriptions_for_user(user_id)
+    removed = 0
+    for sub in subs:
+        ep = str(sub.get("endpoint") or sub.get("_endpoint") or "").strip()
+        if not ep or ep == keep:
+            continue
+        if delete_push_subscription(user_id, ep):
+            removed += 1
+    return removed
+
+
 def prune_push_subscriptions_for_user(
     user_id: int, *, keep_endpoint: str | None = None, max_keep: int = 2
 ) -> int:
     """Delete old device registrations; always keep keep_endpoint if set."""
     if not isinstance(user_id, int) or user_id <= 0:
         return 0
+    keep = str(keep_endpoint or "").strip()
+    if keep:
+        return delete_push_subscriptions_for_user_except(user_id, keep)
     max_keep = max(1, int(max_keep))
     subs = list_push_subscriptions_for_user(user_id)
-    if not subs:
+    if len(subs) <= max_keep:
         return 0
-    keep_eps: list[str] = []
-    if keep_endpoint:
-        keep_eps.append(str(keep_endpoint).strip())
-    for sub in subs:
-        ep = str(sub.get("endpoint") or sub.get("_endpoint") or "").strip()
-        if ep and ep not in keep_eps:
-            keep_eps.append(ep)
-        if len(keep_eps) >= max_keep:
-            break
+    keep_eps = [
+        str(sub.get("endpoint") or sub.get("_endpoint") or "").strip()
+        for sub in subs[:max_keep]
+        if sub.get("endpoint") or sub.get("_endpoint")
+    ]
     conn = get_conn()
     cur = conn.cursor()
     removed = 0

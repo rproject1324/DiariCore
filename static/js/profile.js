@@ -2785,7 +2785,8 @@ async function registerPushFromProfile(options) {
     if (!push?.registerPushForReminders) {
         return { ok: false, error: 'push_module_unavailable' };
     }
-    return push.registerPushForReminders(options || { quiet: true });
+    const opts = Object.assign({ quiet: true }, options || {});
+    return push.registerPushForReminders(opts);
 }
 
 async function syncPushNotificationPrefsToServerFromProfile() {
@@ -2825,23 +2826,28 @@ function initializeReminderTimePreference() {
         if (window.DiariPwaNotifications?.syncPrefsToWorker) {
             void window.DiariPwaNotifications.syncPrefsToWorker();
         }
+        await syncPushNotificationPrefsToServerFromProfile();
+        if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
+            await window.DiariPwaWebPush.syncNotificationPrefsToServer();
+        }
         if (isPwaProfileContext() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            const reg = await registerPushFromProfile({ quiet: true });
-            if (!reg.ok && reg.error && reg.error !== 'not_pwa') {
+            const push = await ensureDiariPwaWebPushReady(8000);
+            if (push?.syncPushSubscriptionToServer) {
+                await push.syncPushSubscriptionToServer({ force: true });
+            } else {
+                await registerPushFromProfile({ quiet: true, force: true });
+            }
+            if (!(await isPwaOfflineForUserActions())) {
                 showNotification(
-                    'Could not register this phone for closed-app reminders. Open Preferences while online, then try again.',
-                    'warning',
-                    7000
+                    'Reminder time saved. Keep DiariCore open for a few seconds so this phone stays registered.',
+                    'info',
+                    6000
                 );
             }
         }
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
             window.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
         }
-        if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
-            void window.DiariPwaWebPush.syncNotificationPrefsToServer();
-        }
-        void syncPushNotificationPrefsToServerFromProfile();
     }
     input.addEventListener('change', onReminderTimeChanged);
     input.addEventListener('input', onReminderTimeChanged);

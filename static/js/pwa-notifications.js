@@ -288,13 +288,21 @@
             .catch(() => {});
     }
 
+    let pushSubscriptionChangeTimer = null;
+
     function bindLifecycle() {
         if (navigator.serviceWorker) {
             navigator.serviceWorker.addEventListener('message', (event) => {
                 if (event.data && event.data.type === 'DIARI_PUSH_SUBSCRIPTION_CHANGE') {
-                    if (global.DiariPwaWebPush?.subscribeWebPush) {
-                        void global.DiariPwaWebPush.subscribeWebPush();
+                    if (pushSubscriptionChangeTimer) {
+                        global.clearTimeout(pushSubscriptionChangeTimer);
                     }
+                    pushSubscriptionChangeTimer = global.setTimeout(function () {
+                        pushSubscriptionChangeTimer = null;
+                        if (global.DiariPwaWebPush?.syncPushSubscriptionToServer) {
+                            void global.DiariPwaWebPush.syncPushSubscriptionToServer({ force: true });
+                        }
+                    }, 2000);
                 }
             });
         }

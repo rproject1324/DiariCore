@@ -5,6 +5,8 @@
     'use strict';
 
     const WEB_PUSH_ACTIVE_KEY = 'diariCoreWebPushActive';
+    const LAST_SAVE_KEY = 'diariCorePushLastSave';
+    const SAVE_DEBOUNCE_MS = 300000;
 
     function isPwaStandalone() {
         try {
@@ -216,9 +218,17 @@
         return diag;
     }
 
-    async function getOrCreatePushSubscription(reg, publicKeyB64) {
+    async function getOrCreatePushSubscription(reg, publicKeyB64, options) {
+        const forceRenew = !!(options && options.forceRenew);
         let sub = await reg.pushManager.getSubscription();
-        if (sub && !subscriptionUsesVapidKey(sub, publicKeyB64)) {
+        if (sub && forceRenew) {
+            try {
+                await sub.unsubscribe();
+            } catch (_) {
+                /* ignore */
+            }
+            sub = null;
+        } else if (sub && !subscriptionUsesVapidKey(sub, publicKeyB64)) {
             try {
                 await sub.unsubscribe();
             } catch (_) {
@@ -235,10 +245,34 @@
         return sub;
     }
 
+    function readLastSave() {
+        try {
+            const raw = global.localStorage.getItem(LAST_SAVE_KEY);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writeLastSave(endpoint, devices, schedule) {
+        try {
+            const payload = {
+                ep: endpoint,
+                at: Date.now(),
+                devices: devices,
+            };
+            if (schedule) payload.schedule = schedule;
+            global.localStorage.setItem(LAST_SAVE_KEY, JSON.stringify(payload));
+        } catch (_) {
+            /* ignore */
+        }
+    }
+
     /**
      * Save the browser's current push subscription to Railway without unsubscribing first.
      */
-    async function syncPushSubscriptionToServer() {
+    async function syncPushSubscriptionToServer(options) {
         if (!isPwaStandalone()) return { ok: false, error: 'PWA only' };
         if (!('serviceWorker' in navigator) || !('PushManager' in global)) {
             return { ok: false, error: 'Push not supported' };
@@ -246,14 +280,34 @@
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
             return { ok: false, error: 'Notifications not allowed' };
         }
+        const force = !!(options && options.force);
         const publicKey = await fetchVapidPublicKey();
         const reg = await ensureServiceWorkerReady();
-        const sub = await getOrCreatePushSubscription(reg, publicKey);
+        const sub = await getOrCreatePushSubscription(reg, publicKey, {
+            forceRenew: !!(options && options.forceRenew),
+        });
+        const endpoint = sub && sub.endpoint ? String(sub.endpoint) : '';
+        const last = readLastSave();
+        if (
+            !force &&
+            endpoint &&
+            last &&
+            last.ep === endpoint &&
+            Date.now() - (last.at || 0) < SAVE_DEBOUNCE_MS
+        ) {
+            return {
+                ok: true,
+                skipped: true,
+                subscribedDevices: last.devices ?? 1,
+                schedule: last.schedule,
+            };
+        }
         const data = await saveSubscriptionOnServer(sub);
         const devices =
             data.subscribedDevices ??
             data.schedule?.subscribedDevices ??
             0;
+        writeLastSave(endpoint, devices, data.schedule);
         try {
             global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
         } catch (_) {
@@ -280,6 +334,7 @@
     async function registerPushForReminders(options) {
         const quiet = !options || options.quiet !== false;
         const maxAttempts = options && options.maxAttempts ? options.maxAttempts : 5;
+        const force = !!(options && options.force);
         if (!isPwaStandalone()) {
             return { ok: false, error: 'Open DiariCore from your home-screen app, not a browser tab.' };
         }
@@ -292,7 +347,7 @@
         let lastError = 'Could not register this phone';
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             try {
-                const result = await syncPushSubscriptionToServer();
+                const result = await syncPushSubscriptionToServer({ force: force });
                 const devices =
                     result.subscribedDevices ??
                     result.schedule?.subscribedDevices ??
@@ -320,7 +375,7 @@
     async function maintainPushRegistration(options) {
         const force = !!(options && options.force);
         const now = Date.now();
-        if (!force && now - lastMaintainAttemptMs < 120000) {
+        if (!force && now - lastMaintainAttemptMs < 300000) {
             return { ok: true, skipped: true };
         }
         if (maintainInFlight) {
