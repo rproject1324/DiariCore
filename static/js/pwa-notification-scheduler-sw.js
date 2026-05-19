@@ -137,8 +137,8 @@ async function showLocalNotification(registration, title, body, tag, url) {
             body,
             tag,
             renotify: true,
-            icon: '/diariclogo.png',
-            badge: '/diariclogo.png',
+            icon: '/diariclogo-pwa-home-192.png',
+            badge: '/diariclogo-pwa-home-192.png',
             data: { url: url || '/write-entry.html' },
         });
         return true;

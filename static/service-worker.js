@@ -2,7 +2,9 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v86';
+const CACHE_NAME = 'diaricore-pwa-v87';
+const PWA_PUSH_NOTIF_ICON = '/diariclogo-pwa-home-192.png';
+const PWA_PUSH_NOTIF_BADGE = '/diariclogo-pwa-home-192.png';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -93,8 +95,8 @@ self.addEventListener('push', (event) => {
                     renotify: notifTag !== 'diari-daily-reminder',
                     requireInteraction: false,
                     silent: false,
-                    icon: '/diariclogo.png',
-                    badge: '/diariclogo.png',
+                    icon: PWA_PUSH_NOTIF_ICON,
+                    badge: PWA_PUSH_NOTIF_BADGE,
                     vibrate: [300, 100, 300, 100, 300],
                     data: { url, tag: notifTag },
                 };

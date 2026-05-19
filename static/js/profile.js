@@ -2838,11 +2838,12 @@ function initializeReminderTimePreference() {
                 await registerPushFromProfile({ quiet: true, force: true });
             }
             if (!(await isPwaOfflineForUserActions())) {
-                showNotification(
-                    'Reminder time saved. Keep DiariCore open for a few seconds so this phone stays registered.',
-                    'info',
-                    6000
-                );
+                const reminderSavedMsg = 'Reminder time set successfully.';
+                if (window.DiariToast && typeof window.DiariToast.show === 'function') {
+                    window.DiariToast.show(reminderSavedMsg, 'success', 3500);
+                } else {
+                    showNotification(reminderSavedMsg, 'success', 3500);
+                }
             }
         }
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
