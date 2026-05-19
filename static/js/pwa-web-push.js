@@ -274,8 +274,12 @@
     /**
      * Ensure this phone is registered on the server (retries). Required for closed-app reminders.
      */
+    let lastMaintainAttemptMs = 0;
+    let maintainInFlight = null;
+
     async function registerPushForReminders(options) {
         const quiet = !options || options.quiet !== false;
+        const maxAttempts = options && options.maxAttempts ? options.maxAttempts : 5;
         if (!isPwaStandalone()) {
             return { ok: false, error: 'Open DiariCore from your home-screen app, not a browser tab.' };
         }
@@ -286,7 +290,7 @@
             };
         }
         let lastError = 'Could not register this phone';
-        for (let attempt = 0; attempt < 3; attempt += 1) {
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             try {
                 const result = await syncPushSubscriptionToServer();
                 const devices =
@@ -296,16 +300,71 @@
                 if (result.ok && devices >= 1) {
                     return { ok: true, subscribedDevices: devices };
                 }
+                if (result && result.error) {
+                    lastError = result.error;
+                }
             } catch (e) {
                 lastError = e && e.message ? e.message : lastError;
                 if (!quiet) {
                     console.warn('[DiariPwaWebPush] register attempt', attempt + 1, e);
                 }
             }
-            await delay(600);
+            await delay(attempt < 2 ? 400 : 800);
         }
         return { ok: false, error: lastError };
     }
+
+    /**
+     * Re-register this device when the PWA opens or returns to foreground (debounced).
+     */
+    async function maintainPushRegistration(options) {
+        const force = !!(options && options.force);
+        const now = Date.now();
+        if (!force && now - lastMaintainAttemptMs < 45000) {
+            return { ok: true, skipped: true };
+        }
+        if (maintainInFlight) {
+            return maintainInFlight;
+        }
+        lastMaintainAttemptMs = now;
+        maintainInFlight = registerPushForReminders({ quiet: true, maxAttempts: force ? 5 : 3 })
+            .then(function (result) {
+                maintainInFlight = null;
+                return result;
+            })
+            .catch(function (e) {
+                maintainInFlight = null;
+                return { ok: false, error: e && e.message ? e.message : String(e) };
+            });
+        return maintainInFlight;
+    }
+
+    function bindPushLifecycleMaintenance() {
+        if (bindPushLifecycleMaintenance._bound) return;
+        bindPushLifecycleMaintenance._bound = true;
+        global.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+                void maintainPushRegistration();
+            } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                void syncPushSubscriptionToServer().catch(function () {
+                    /* ignore */
+                });
+                syncNotificationPrefsToServerBeacon();
+            }
+        });
+        global.addEventListener('online', function () {
+            void maintainPushRegistration({ force: true });
+        });
+        global.addEventListener('pagehide', function () {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                void syncPushSubscriptionToServer().catch(function () {
+                    /* ignore */
+                });
+                syncNotificationPrefsToServerBeacon();
+            }
+        });
+    }
+    bindPushLifecycleMaintenance();
 
     /** Force new FCM token (only when user taps "Use this phone only"). */
     async function renewPushSubscription() {
@@ -524,6 +583,7 @@
         isWebPushActive,
         subscribeWebPush,
         registerPushForReminders,
+        maintainPushRegistration,
         syncPushSubscriptionToServer,
         renewPushSubscription,
         registerThisPhoneOnly,

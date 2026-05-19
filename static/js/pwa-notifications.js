@@ -237,16 +237,16 @@
         }
         const result = await Notification.requestPermission();
         await syncPrefsToWorker();
-        if (result === 'granted' && global.DiariPwaWebPush?.subscribeWebPush) {
+        if (result === 'granted' && global.DiariPwaWebPush) {
             try {
-                await global.DiariPwaWebPush.subscribeWebPush();
-                if (global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
-                    const ok = await global.DiariPwaWebPush.confirmWebPushWithServerTest();
-                    if (!ok) {
-                        console.warn(
-                            '[DiariPwa] Server push not confirmed — local reminders stay active as backup.'
-                        );
-                    }
+                const push = await global.DiariPwaWebPush.waitForReady(12000);
+                if (push.maintainPushRegistration) {
+                    await push.maintainPushRegistration({ force: true });
+                } else if (push.registerPushForReminders) {
+                    await push.registerPushForReminders({ quiet: true });
+                }
+                if (push.syncNotificationPrefsToServer) {
+                    await push.syncNotificationPrefsToServer();
                 }
             } catch (e) {
                 console.warn('[DiariPwaNotifications] Web Push subscribe failed:', e);
@@ -303,13 +303,9 @@
         global.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 kickWorkerCheck();
-            } else if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
-                global.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
-            }
-        });
-        global.addEventListener('pagehide', () => {
-            if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
-                global.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
+                if (global.DiariPwaWebPush?.maintainPushRegistration) {
+                    void global.DiariPwaWebPush.maintainPushRegistration();
+                }
             }
         });
         global.addEventListener('online', () => kickWorkerCheck());
@@ -402,18 +398,20 @@
             const asked = global.localStorage.getItem(PERMISSION_ASKED_KEY);
             if (isDailyRemindersEnabled() && !asked && Notification?.permission === 'default') {
                 await requestPermissionIfNeeded();
-            } else if (
-                Notification?.permission === 'granted' &&
-                global.DiariPwaWebPush?.registerPushForReminders
-            ) {
+            } else if (Notification?.permission === 'granted' && global.DiariPwaWebPush?.waitForReady) {
                 try {
-                    await global.DiariPwaWebPush.registerPushForReminders({ quiet: true });
+                    const push = await global.DiariPwaWebPush.waitForReady(12000);
+                    if (push.maintainPushRegistration) {
+                        await push.maintainPushRegistration({ force: true });
+                    } else if (push.registerPushForReminders) {
+                        await push.registerPushForReminders({ quiet: true });
+                    }
+                    if (push.syncNotificationPrefsToServer) {
+                        await push.syncNotificationPrefsToServer();
+                    }
                 } catch (e) {
                     console.warn('[DiariPwaNotifications] register push failed:', e);
                 }
-            }
-            if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {
-                void global.DiariPwaWebPush.syncNotificationPrefsToServer();
             }
             startScheduler();
         })();

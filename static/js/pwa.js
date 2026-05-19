@@ -230,6 +230,11 @@
         window.addEventListener('load', () => {
             navigator.serviceWorker
                 .register(SW_URL, { scope: '/' })
+                .then(function () {
+                    if (isStandalone()) {
+                        void bootPwaPushRegistration();
+                    }
+                })
                 .catch((err) => console.warn('[PWA] Service worker registration failed:', err));
         });
     }
@@ -252,22 +257,83 @@
     }
 
     function loadScriptOnce(src) {
-        if (document.querySelector('script[data-diari-src="' + src + '"]')) return;
-        const s = document.createElement('script');
-        s.src = src;
-        s.dataset.diariSrc = src;
-        document.head.appendChild(s);
+        const existing = document.querySelector('script[data-diari-src="' + src + '"]');
+        if (existing) {
+            if (
+                existing.dataset.diariLoaded === '1' ||
+                existing.readyState === 'complete' ||
+                existing.readyState === 'loaded'
+            ) {
+                existing.dataset.diariLoaded = '1';
+                return Promise.resolve();
+            }
+            return new Promise(function (resolve, reject) {
+                existing.addEventListener('load', function onLoad() {
+                    existing.dataset.diariLoaded = '1';
+                    existing.removeEventListener('load', onLoad);
+                    resolve();
+                });
+                existing.addEventListener('error', function onErr() {
+                    existing.removeEventListener('error', onErr);
+                    reject(new Error('Failed to load ' + src));
+                });
+            });
+        }
+        return new Promise(function (resolve, reject) {
+            const s = document.createElement('script');
+            s.src = src;
+            s.dataset.diariSrc = src;
+            s.onload = function () {
+                s.dataset.diariLoaded = '1';
+                resolve();
+            };
+            s.onerror = function () {
+                reject(new Error('Failed to load ' + src));
+            };
+            document.head.appendChild(s);
+        });
+    }
+
+    const PWA_NOTIFY_SCRIPTS = [
+        'most-active-time.js',
+        'pwa-notification-idb.js',
+        'pwa-notification-templates.js',
+        'pwa-web-push.js',
+        'pwa-notifications.js',
+    ];
+
+    async function bootPwaPushRegistration() {
+        if (!isStandalone()) return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return;
+        }
+        try {
+            const push = await window.DiariPwaWebPush.waitForReady(12000);
+            if (push.maintainPushRegistration) {
+                await push.maintainPushRegistration({ force: true });
+            } else if (push.registerPushForReminders) {
+                await push.registerPushForReminders({ quiet: true });
+            }
+            if (push.syncNotificationPrefsToServer) {
+                await push.syncNotificationPrefsToServer();
+            }
+        } catch (e) {
+            console.warn('[PWA] push registration boot failed:', e);
+        }
     }
 
     function loadPwaNotificationStack() {
         if (!isStandalone()) return;
-        [
-            'most-active-time.js',
-            'pwa-notification-idb.js',
-            'pwa-notification-templates.js',
-            'pwa-web-push.js',
-            'pwa-notifications.js',
-        ].forEach(loadScriptOnce);
+        void (async function () {
+            try {
+                for (let i = 0; i < PWA_NOTIFY_SCRIPTS.length; i += 1) {
+                    await loadScriptOnce(PWA_NOTIFY_SCRIPTS[i]);
+                }
+                await bootPwaPushRegistration();
+            } catch (e) {
+                console.warn('[PWA] notification stack load failed:', e);
+            }
+        })();
     }
 
     if (isStandalone()) {

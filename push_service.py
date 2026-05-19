@@ -595,7 +595,7 @@ def _reconcile_legacy_daily_without_ack(
 
 def _should_send_daily_now(state: dict, today_key: str, reminder: tuple[int, int]) -> tuple[bool, str | None]:
     """Whether cron should POST another daily push (one retry only if phone never acked)."""
-    if _daily_reminder_fired_today(state, today_key, reminder):
+    if _daily_reminder_confirmed_on_phone(state, today_key, reminder):
         return False, "already_confirmed_on_phone"
     pending = _pending_daily_matches(state, today_key, reminder)
     if not pending:
