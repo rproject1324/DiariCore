@@ -6,6 +6,7 @@
     'use strict';
 
     function isPwaStandalone() {
+        if (!g) return false;
         try {
             if (g.DiariPWA && typeof g.DiariPWA.isStandalone === 'function' && g.DiariPWA.isStandalone()) {
                 return true;
@@ -13,10 +14,14 @@
         } catch (_) {
             /* ignore */
         }
-        return (
-            (g.matchMedia && g.matchMedia('(display-mode: standalone)').matches) ||
-            g.navigator.standalone === true
-        );
+        try {
+            return (
+                (g.matchMedia && g.matchMedia('(display-mode: standalone)').matches) ||
+                (g.navigator && g.navigator.standalone === true)
+            );
+        } catch (_) {
+            return false;
+        }
     }
 
     function readSessionUser() {

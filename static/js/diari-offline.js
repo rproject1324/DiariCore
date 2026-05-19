@@ -34,6 +34,7 @@
     }
 
     function isPwaStandalone() {
+        if (!global) return false;
         try {
             if (global.DiariPWA && typeof global.DiariPWA.isStandalone === 'function') {
                 return global.DiariPWA.isStandalone();
@@ -41,12 +42,17 @@
         } catch (_) {
             /* ignore */
         }
-        return (
-            (global.document &&
-                global.document.documentElement.classList.contains('diari-pwa-standalone')) ||
-            (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
-            global.navigator.standalone === true
-        );
+        try {
+            return (
+                (global.document &&
+                    global.document.documentElement &&
+                    global.document.documentElement.classList.contains('diari-pwa-standalone')) ||
+                (global.matchMedia && global.matchMedia('(display-mode: standalone)').matches) ||
+                (global.navigator && global.navigator.standalone === true)
+            );
+        } catch (_) {
+            return false;
+        }
     }
 
     /**
