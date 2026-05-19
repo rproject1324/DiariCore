@@ -133,6 +133,7 @@ def _get_vapid():
 def push_health() -> dict:
     """Diagnostics for Railway / support (no secrets)."""
     pub = vapid_public_key()
+    raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
     v = _get_vapid()
     pem_ok = False
     if v:
@@ -148,10 +149,21 @@ def push_health() -> dict:
     except ImportError:
         pywebpush_ok = False
     subs = db.list_push_subscriptions_grouped_by_user()
+    private_key_set = bool(raw_priv)
+    if not private_key_set:
+        private_key_status = "missing"
+    elif not v:
+        private_key_status = "unreadable"
+    elif not pem_ok:
+        private_key_status = "invalid"
+    else:
+        private_key_status = "ok"
     return {
-        "configured": bool(pub and v),
+        "configured": bool(pub and v and pem_ok),
         "publicKeySet": bool(pub),
+        "privateKeySet": private_key_set,
         "privateKeySignable": pem_ok,
+        "privateKeyStatus": private_key_status,
         "pywebpushInstalled": pywebpush_ok,
         "subscribedUsers": len(subs),
         "subscribedDevices": sum(len(s) for s in subs.values()),
