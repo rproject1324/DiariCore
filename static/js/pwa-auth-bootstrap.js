@@ -6,7 +6,6 @@
     'use strict';
 
     function isPwaStandalone() {
-        if (!g) return false;
         try {
             if (g.DiariPWA && typeof g.DiariPWA.isStandalone === 'function' && g.DiariPWA.isStandalone()) {
                 return true;
@@ -14,14 +13,10 @@
         } catch (_) {
             /* ignore */
         }
-        try {
-            return (
-                (g.matchMedia && g.matchMedia('(display-mode: standalone)').matches) ||
-                (g.navigator && g.navigator.standalone === true)
-            );
-        } catch (_) {
-            return false;
-        }
+        return (
+            (g.matchMedia && g.matchMedia('(display-mode: standalone)').matches) ||
+            g.navigator.standalone === true
+        );
     }
 
     function readSessionUser() {
@@ -68,4 +63,4 @@
     if (!user && !isPublicAuth) {
         g.location.replace('login.html');
     }
-})(typeof window !== 'undefined' ? window : globalThis);
+})();

@@ -54,7 +54,6 @@ def start(worker_id: int | None = None) -> None:
                     "skippedEntryToday": result.get("skippedEntryToday"),
                     "ok": result.get("ok"),
                     "error": result.get("error"),
-                    "userSummary": result.get("userSummary"),
                 }
                 print(
                     "[diari-push-cron] "
@@ -62,13 +61,6 @@ def start(worker_id: int | None = None) -> None:
                     f"dailyDue={result.get('dailyDueUsers')} skippedEntry={result.get('skippedEntryToday')}",
                     flush=True,
                 )
-                for row in result.get("userSummary") or []:
-                    print(
-                        "[diari-push-cron] "
-                        f"user={row.get('userId')} reminder={row.get('reminderTimeUsed')} "
-                        f"override={row.get('override')!r} why={row.get('whyNotDue')}",
-                        flush=True,
-                    )
             except Exception as ex:
                 print(f"[diari-push-cron] ERROR: {ex}", flush=True)
             time.sleep(60.0)

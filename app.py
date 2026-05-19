@@ -27,6 +27,7 @@ import input_security as insec
 import password_policy
 import space_nlp
 import push_service
+import push_scheduler
 
 ENTRY_WORD_MAX = int(os.environ.get("ENTRY_WORD_MAX", "300"))
 
@@ -2450,7 +2451,8 @@ def pwa_service_worker():
 def api_push_vapid_public_key():
     """PWA Web Push: public VAPID key for PushManager.subscribe."""
     key = push_service.vapid_public_key()
-    health = push_service.push_health_client()
+    health = push_service.push_health()
+    health.update(push_service.push_scheduler_health())
     if not key:
         return jsonify({"success": False, "error": "Web Push is not configured on this server.", **health}), 503
     return jsonify({"success": True, "publicKey": key, **health}), 200
@@ -2470,13 +2472,9 @@ def api_push_subscribe():
         return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
     if not db.upsert_push_subscription(user_id, sub, push_service.vapid_public_key()):
         return jsonify({"success": False, "error": "Could not save subscription."}), 500
-    # Do not merge reminderTimeOverride here — subscribe runs on every app open and the
-    # client often sends a default hour before Profile loads, wiping the user's real time.
     notif = data.get("notifications")
     if isinstance(notif, dict):
-        safe = {k: v for k, v in notif.items() if k != "reminderTimeOverride"}
-        if safe:
-            db.merge_user_ui_preferences_json(user_id, {"notifications": safe})
+        db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
     return jsonify({"success": True, "webPush": True}), 200
 
 
@@ -2530,19 +2528,6 @@ def api_push_schedule_status():
     return jsonify(
         {"success": True, **push_service.schedule_status_for_user(user_id)}
     ), 200
-
-
-@app.route("/api/push/trigger-daily", methods=["POST"])
-def api_push_trigger_daily():
-    """PWA: send daily nudge now (tests real daily copy; skips if entry today)."""
-    user_id, auth_err = _require_authenticated_user()
-    if auth_err:
-        return auth_err
-    if not push_service.push_configured():
-        return jsonify({"success": False, "error": "Web Push is not configured."}), 503
-    result = push_service.send_daily_reminder_to_user(user_id)
-    status = 200 if result.get("ok") else 400
-    return jsonify({"success": result.get("ok"), **result}), status
 
 
 @app.route("/api/push/test", methods=["POST"])

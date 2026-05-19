@@ -20,9 +20,9 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v10"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v7"
 DISPATCH_WINDOW_MINUTES = max(
-    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "60"))
+    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
 
 
@@ -227,8 +227,8 @@ def purge_stale_push_subscriptions() -> int:
     return removed
 
 
-def _push_health_crypto_core() -> dict:
-    """VAPID + library checks only — no DB subscription scans (safe for hot paths)."""
+def push_health() -> dict:
+    """Diagnostics for Railway / support (no secrets)."""
     pub = vapid_public_key()
     raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
     v = _get_vapid()
@@ -247,6 +247,7 @@ def _push_health_crypto_core() -> dict:
         pywebpush_ok = True
     except ImportError:
         pywebpush_ok = False
+    subs = db.list_push_subscriptions_grouped_by_user()
     private_key_set = bool(raw_priv)
     if not private_key_set:
         private_key_status = "missing"
@@ -265,33 +266,10 @@ def _push_health_crypto_core() -> dict:
         "vapidCanSign": sign_ok,
         "privateKeyStatus": private_key_status,
         "pywebpushInstalled": pywebpush_ok,
+        "subscribedUsers": len(subs),
+        "subscribedDevices": sum(len(s) for s in subs.values()),
+        "staleSubscriptionCount": count_stale_push_subscriptions(),
     }
-
-
-def push_health_client() -> dict:
-    """Lightweight health for PWA (vapid-public-key): no full-table subscription scan."""
-    h = _push_health_crypto_core()
-    h.update(push_scheduler_health())
-    return h
-
-
-def push_health() -> dict:
-    """Full diagnostics for ops (includes subscription counts; scans push_subscriptions)."""
-    out = _push_health_crypto_core()
-    subs = db.list_push_subscriptions_grouped_by_user()
-    current = vapid_public_key() or ""
-    stale = 0
-    devices = 0
-    for sublist in subs.values():
-        for sub in sublist:
-            devices += 1
-            saved = str(sub.get("_vapidPublicKey") or "").strip()
-            if saved and current and saved != current:
-                stale += 1
-    out["subscribedUsers"] = len(subs)
-    out["subscribedDevices"] = devices
-    out["staleSubscriptionCount"] = stale
-    return out
 
 
 def push_scheduler_health() -> dict:
@@ -315,7 +293,7 @@ def vapid_claim_email() -> str:
 
 
 def push_configured() -> bool:
-    h = _push_health_crypto_core()
+    h = push_health()
     return bool(h.get("configured") and h.get("privateKeySignable") and h.get("vapidCanSign"))
 
 
@@ -371,11 +349,8 @@ def _entry_manila_date_key(entry: dict) -> str:
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            # Naive timestamps from the app are treated as Asia/Manila wall time (journal UX).
-            dt = dt.replace(tzinfo=NOTIFY_TZ)
-        else:
-            dt = dt.astimezone(NOTIFY_TZ)
-        return dt.strftime("%Y-%m-%d")
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(NOTIFY_TZ).strftime("%Y-%m-%d")
     except Exception:
         return ""
 
@@ -521,34 +496,6 @@ def clear_daily_reminder_state(user_id: int) -> None:
     _save_push_state(user_id, state)
 
 
-def _why_not_daily_due(
-    prefs: dict,
-    entries: list[dict],
-    state: dict,
-    reminder: tuple[int, int] | None,
-    h: int,
-    m: int,
-    today_key: str,
-) -> str:
-    """Human-readable reason the daily Web Push is not firing this minute."""
-    if not prefs.get("dailyEnabled"):
-        return "daily_disabled"
-    if _has_entry_today_manila(entries):
-        return "has_entry_today"
-    if not reminder:
-        return "no_reminder_time_on_server"
-    if _daily_reminder_fired_today(state, today_key, reminder):
-        hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
-        return f"already_sent_today_at_{hhmm}"
-    if not _reminder_due_in_window(h, m, reminder):
-        hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
-        return (
-            f"outside_window manila_now={h:02d}:{m:02d} "
-            f"fires_{hhmm}_for_{DISPATCH_WINDOW_MINUTES}m"
-        )
-    return "due_now"
-
-
 def schedule_status_for_user(user_id: int) -> dict:
     """What the cron dispatcher will use for this account (for debugging)."""
     entries = _serialize_entries_for_user(user_id)
@@ -559,8 +506,13 @@ def schedule_status_for_user(user_id: int) -> dict:
     state = _user_push_state(user_id)
     has_entry = _has_entry_today_manila(entries)
     hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
-    why = _why_not_daily_due(prefs, entries, state, reminder, h, m, _manila_date_key(now))
-    due_now = why == "due_now"
+    due_now = bool(
+        not has_entry
+        and prefs["dailyEnabled"]
+        and reminder
+        and _reminder_due_in_window(h, m, reminder)
+        and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
+    )
     grouped = db.list_push_subscriptions_grouped_by_user()
     devices = len(grouped.get(int(user_id)) or [])
     return {
@@ -572,20 +524,19 @@ def schedule_status_for_user(user_id: int) -> dict:
             "override" if _parse_hhmm(prefs["reminderTimeOverride"]) else "most_active_hour"
         ),
         "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
+        "internalCronRequired": False,
         "dailyEnabled": prefs["dailyEnabled"],
         "hasEntryToday": has_entry,
         "dailyDueNow": due_now,
-        "whyNotDueNow": why,
         "dailyAlreadySentToday": (
             _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
             if reminder
             else False
         ),
         "subscribedDevices": devices,
-        "help": (
-            "If whyNotDueNow starts with outside_window_, wait until reminderTimeUsed "
-            f"(fires for {DISPATCH_WINDOW_MINUTES} min). If no_reminder_time_on_server, "
-            "open PWA Profile, set Reminder Time, wait 3s before closing app."
+        "needsCron": (
+            "Server runs internal dispatch every 60s when deployed. "
+            "Optional: cron-job.org POST /api/internal/push/dispatch each minute."
         ),
     }
 
@@ -758,39 +709,6 @@ def send_test_push_to_all() -> dict:
     return out
 
 
-def send_daily_reminder_to_user(user_id: int) -> dict:
-    """Send daily nudge now (ignores time window; respects has_entry_today)."""
-    grouped = db.list_push_subscriptions_grouped_by_user()
-    subs = grouped.get(int(user_id)) or []
-    if not subs:
-        return {"ok": False, "error": "No push subscription. Allow notifications in the PWA."}
-    entries = _serialize_entries_for_user(user_id)
-    prefs = _user_notification_prefs(user_id)
-    if not prefs["dailyEnabled"]:
-        return {"ok": False, "error": "Daily reminders are disabled."}
-    if _has_entry_today_manila(entries):
-        return {"ok": False, "error": "You already wrote today — daily reminder skipped."}
-    sent = 0
-    results = []
-    for sub in subs:
-        ok, err = send_web_push(
-            sub,
-            "A gentle journal nudge",
-            _build_daily_body(),
-            "/write-entry.html",
-        )
-        results.append({"ok": ok, "error": err})
-        if ok:
-            sent += 1
-    if sent > 0:
-        state = dict(_user_push_state(user_id))
-        reminder = _resolve_reminder_hhmm(prefs, entries)
-        if reminder:
-            _mark_daily_reminder_sent(state, _manila_date_key(), reminder)
-            _save_push_state(user_id, state)
-    return {"ok": sent > 0, "sent": sent, "results": results}
-
-
 def send_test_push_to_user(user_id: int) -> dict:
     """Immediate test notification (ignores schedule and entry-today rules)."""
     purged = purge_stale_push_subscriptions()
@@ -874,7 +792,6 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
     skipped_entry_today = 0
     daily_due_users = 0
     user_debug: list[dict] = []
-    user_summary: list[dict] = []
 
     for user_id, subs in grouped.items():
         if not subs:
@@ -904,18 +821,6 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             ),
             "devices": len(subs),
         }
-        dbg["whyNotDue"] = _why_not_daily_due(
-            prefs, entries, state, reminder, h, m, today_key
-        )
-        user_summary.append(
-            {
-                "userId": user_id,
-                "reminderTimeUsed": dbg["reminderTimeUsed"],
-                "override": prefs["reminderTimeOverride"],
-                "whyNotDue": dbg["whyNotDue"],
-                "inWindow": dbg["inReminderWindow"],
-            }
-        )
 
         def _push_all(title: str, body: str, url: str) -> bool:
             nonlocal sent, errors, last_error
@@ -994,9 +899,6 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         if state_dirty:
             _save_push_state(user_id, state)
 
-        if debug:
-            user_debug.append(dict(dbg))
-
     out = {
         "ok": True,
         "sent": sent,
@@ -1009,7 +911,6 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         "staleSubscriptionsPurged": purged,
         "dailyDueUsers": daily_due_users,
         "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
-        "userSummary": user_summary,
     }
     if debug:
         out["userDebug"] = user_debug

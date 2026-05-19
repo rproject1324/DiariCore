@@ -1903,12 +1903,7 @@ def merge_user_ui_preferences_json(user_id: int, patch: dict) -> bool:
     for key, val in patch.items():
         if isinstance(val, dict) and isinstance(cur_blob.get(key), dict):
             merged = dict(cur_blob[key])
-            for nk, nv in val.items():
-                # Do not wipe saved reminder time when client sends empty override.
-                if key == "notifications" and nk == "reminderTimeOverride":
-                    if not str(nv or "").strip():
-                        continue
-                merged[nk] = nv
+            merged.update(val)
             cur_blob[key] = merged
         else:
             cur_blob[key] = val
