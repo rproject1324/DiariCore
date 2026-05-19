@@ -269,9 +269,12 @@
             }
         }
         const timeInput = document.getElementById('profileReminderTimeInput');
-        if (timeInput && timeInput.dataset.pwaNotifyTimeBound !== '1') {
-            timeInput.dataset.pwaNotifyTimeBound = '1';
-            timeInput.addEventListener('change', () => void syncPrefsToWorker());
+        if (timeInput) {
+            timeInput.value = getEffectiveReminderHHmm();
+            if (timeInput.dataset.pwaNotifyTimeBound !== '1') {
+                timeInput.dataset.pwaNotifyTimeBound = '1';
+                timeInput.addEventListener('change', () => void syncPrefsToWorker());
+            }
         }
     }
 

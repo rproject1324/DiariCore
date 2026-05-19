@@ -3,6 +3,7 @@
 function refreshProfileAfterPwaSync() {
     initializeProfileFromStorage();
     hydratePersonalInfoPanel();
+    hydrateProfileReminderTimeInput();
     if (window.DiariTheme && typeof window.DiariTheme.syncToggleState === 'function') {
         window.DiariTheme.syncToggleState();
     }
