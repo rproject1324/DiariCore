@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v5"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v6"
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "5"))
 )
@@ -303,10 +303,31 @@ def _manila_hm(dt: datetime | None = None) -> tuple[int, int]:
 
 
 def _parse_hhmm(s: str) -> tuple[int, int] | None:
-    m = re.match(r"^(\d{2}):(\d{2})$", str(s or "").strip())
+    raw = str(s or "").strip()
+    if not raw:
+        return None
+    m = re.match(r"^(\d{1,2}):(\d{2})$", raw)
     if not m:
         return None
-    return int(m.group(1)), int(m.group(2))
+    h, mi = int(m.group(1)), int(m.group(2))
+    if 0 <= h <= 23 and 0 <= mi <= 59:
+        return h, mi
+    return None
+
+
+def _resolve_reminder_hhmm(prefs: dict, entries: list[dict]) -> tuple[int, int] | None:
+    override = (prefs.get("reminderTimeOverride") or "").strip()
+    return _parse_hhmm(override) or _parse_hhmm(_most_active_hour_hhmm(entries))
+
+
+def _reminder_due_in_window(
+    h: int, m: int, reminder: tuple[int, int], window_minutes: int | None = None
+) -> bool:
+    """True during [reminder, reminder+window) Manila — tolerates cron every 1–5 min."""
+    w = DISPATCH_WINDOW_MINUTES if window_minutes is None else max(1, window_minutes)
+    now = h * 60 + m
+    start = reminder[0] * 60 + reminder[1]
+    return start <= now < start + w
 
 
 def _entry_manila_date_key(entry: dict) -> str:
@@ -470,9 +491,7 @@ def schedule_status_for_user(user_id: int) -> dict:
     """What the cron dispatcher will use for this account (for debugging)."""
     entries = _serialize_entries_for_user(user_id)
     prefs = _user_notification_prefs(user_id)
-    reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
-        _most_active_hour_hhmm(entries)
-    )
+    reminder = _resolve_reminder_hhmm(prefs, entries)
     now = _manila_now()
     h, m = _manila_hm(now)
     state = _user_push_state(user_id)
@@ -482,8 +501,7 @@ def schedule_status_for_user(user_id: int) -> dict:
         not has_entry
         and prefs["dailyEnabled"]
         and reminder
-        and h == reminder[0]
-        and m == reminder[1]
+        and _reminder_due_in_window(h, m, reminder)
         and not _daily_reminder_fired_today(state, _manila_date_key(now), reminder)
     )
     grouped = db.list_push_subscriptions_grouped_by_user()
@@ -775,9 +793,25 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         state_dirty = False
         has_entry_today = _has_entry_today_manila(entries)
 
-        reminder = _parse_hhmm(prefs["reminderTimeOverride"]) or _parse_hhmm(
-            _most_active_hour_hhmm(entries)
-        )
+        reminder = _resolve_reminder_hhmm(prefs, entries)
+        dbg = {
+            "userId": user_id,
+            "reminderTimeOverride": prefs["reminderTimeOverride"],
+            "reminderTimeUsed": (
+                f"{reminder[0]:02d}:{reminder[1]:02d}" if reminder else None
+            ),
+            "dailyEnabled": prefs["dailyEnabled"],
+            "hasEntryToday": has_entry_today,
+            "inReminderWindow": (
+                _reminder_due_in_window(h, m, reminder) if reminder else False
+            ),
+            "alreadySentToday": (
+                _daily_reminder_fired_today(state, today_key, reminder)
+                if reminder
+                else False
+            ),
+            "devices": len(subs),
+        }
 
         def _push_all(title: str, body: str, url: str) -> bool:
             nonlocal sent, errors, last_error
