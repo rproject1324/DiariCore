@@ -121,45 +121,6 @@ function isPwaOfflineForUserActionsSync() {
     return navigator.onLine === false;
 }
 
-const PROFILE_PERSONAL_OFFLINE_FIELD_IDS = [
-    'profileFieldFirstName',
-    'profileFieldLastName',
-    'profileFieldNickname',
-    'profileFieldEmail',
-    'profileFieldGender',
-    'profileFieldBirthday',
-];
-
-function applyPwaProfilePersonalOfflineState() {
-    if (!isPwaProfileContext()) return;
-    const panel = document.getElementById('profileSectionPersonalInfo');
-    const offline = navigator.onLine === false;
-    const root = document.documentElement;
-    if (root) {
-        root.classList.toggle('diari-pwa-offline', offline);
-    }
-    if (panel) {
-        panel.classList.toggle('pwa-profile-personal-offline', offline);
-    }
-    PROFILE_PERSONAL_OFFLINE_FIELD_IDS.forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.disabled = offline;
-        el.setAttribute('aria-disabled', offline ? 'true' : 'false');
-    });
-    const cancelBtn = document.getElementById('profilePersonalCancelBtn');
-    const saveBtn = document.getElementById('profilePersonalSaveBtn');
-    const photoBtn = document.getElementById('profilePersonalChangePhotoBtn');
-    [cancelBtn, saveBtn, photoBtn].forEach(function (btn) {
-        if (!btn) return;
-        btn.disabled = offline;
-        btn.setAttribute('aria-disabled', offline ? 'true' : 'false');
-    });
-    refreshProfilePersonalSaveButton();
-}
-
-window.applyPwaProfilePersonalOfflineState = applyPwaProfilePersonalOfflineState;
-
 function profilePersonalNicknameEmailChangedFromStored(user, nick, email) {
     if (!user) return true;
     const origNick = String(user.nickname || '').trim();
@@ -688,7 +649,12 @@ function isProfilePersonalFormValid() {
 function refreshProfilePersonalSaveButton() {
     var btn = document.getElementById('profilePersonalSaveBtn');
     if (!btn) return;
-    if (isPwaProfileContext() && isPwaOfflineForUserActionsSync()) {
+    if (
+        isPwaProfileContext() &&
+        (typeof window.isPwaProfilePersonalOffline === 'function'
+            ? window.isPwaProfilePersonalOffline()
+            : isPwaOfflineForUserActionsSync())
+    ) {
         btn.disabled = true;
         return;
     }

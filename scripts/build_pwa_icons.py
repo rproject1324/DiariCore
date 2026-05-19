@@ -1,7 +1,7 @@
 """
 Build PWA manifest / launcher icons only (does NOT modify diariclogo.png in the app UI).
 
-- diariclogo-pwa-*.png — white background + logo (OS splash + launcher; no sage box flash)
+- diariclogo-pwa-*.png — soft sage (#6F8F7F) background + logo (PWA launcher / manifest)
 - diariclogo-pwa-home-*.png — optional green-brand launcher assets
 
 Run: py -3 scripts/build_pwa_icons.py
@@ -43,7 +43,7 @@ def main() -> None:
         (512, ART_SCALE, "diariclogo-pwa-512.png"),
         (512, MASKABLE_SCALE, "diariclogo-pwa-maskable.png"),
     ):
-        _compose(size, scale, IMG / name, WHITE)
+        _compose(size, scale, IMG / name, BRAND_GREEN)
     _compose(192, ART_SCALE, IMG / "diariclogo-pwa-home-192.png", BRAND_GREEN)
     _compose(512, ART_SCALE, IMG / "diariclogo-pwa-home-512.png", BRAND_GREEN)
     _compose(192, NOTIF_ART_SCALE, IMG / "diariclogo-pwa-notif-192.png", BRAND_GREEN)

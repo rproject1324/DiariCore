@@ -2184,6 +2184,13 @@
         const kickSync = () => void requestPwaSync({ trustNavigatorOnline: true });
 
         global.addEventListener('online', kickSync);
+        const refreshPwaProfileOfflineUi = () => {
+            if (typeof global.applyPwaProfilePersonalOfflineState === 'function') {
+                global.applyPwaProfilePersonalOfflineState();
+            }
+        };
+        global.addEventListener('offline', refreshPwaProfileOfflineUi);
+        global.addEventListener('online', refreshPwaProfileOfflineUi);
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') kickSync();
         });

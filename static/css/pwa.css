@@ -276,14 +276,14 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
     }
 
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-        padding-right: 4.25rem !important;
+        padding-right: 4.5rem !important;
         text-align: center;
     }
 
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        margin-right: 2rem !important;
+        margin-right: 2.15rem !important;
         margin-left: 0 !important;
-        transform: translateX(-14px) !important;
+        transform: translateX(-16px) !important;
         cursor: pointer;
         opacity: 0.92;
     }
@@ -300,7 +300,6 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
         pointer-events: none !important;
         cursor: not-allowed !important;
         filter: grayscale(0.25) !important;
-        -webkit-text-fill-color: var(--text-muted, #8a9aa3) !important;
     }
 
     html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field,

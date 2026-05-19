@@ -160,12 +160,25 @@
         );
     }
 
+    function clearPwaShellInlineOverrides() {
+        const root = document.documentElement;
+        [
+            '--background-color',
+            '--background-soft',
+            '--background-accent',
+            '--card-background',
+        ].forEach(function (key) {
+            root.style.removeProperty(key);
+        });
+    }
+
     function applyTheme(theme) {
         const isDark = theme === 'dark';
         document.documentElement.classList.toggle(DARK_CLASS, isDark);
         if (document.body) {
             document.body.classList.toggle(DARK_CLASS, isDark);
         }
+        clearPwaShellInlineOverrides();
         applySuccessColorsFromPrimary(getPaletteById(getSavedPaletteId()).primary);
     }
 

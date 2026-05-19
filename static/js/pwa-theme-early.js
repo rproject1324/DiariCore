@@ -73,28 +73,17 @@
         );
     }
 
-    function applyShellBackgrounds(primary, isDark) {
+    /** Palette tokens only — shell backgrounds come from theme.css (:root.theme-dark) so dark-mode toggle works. */
+    function clearPwaShellInlineOverrides() {
         const root = g.document.documentElement;
-        if (isDark) {
-            root.style.setProperty('--background-color', '#11171a');
-            root.style.setProperty('--background-soft', '#1a2327');
-            root.style.setProperty('--background-accent', '#1f2b30');
-            root.style.setProperty('--card-background', '#182126');
-            return;
-        }
-        root.style.setProperty(
+        [
             '--background-color',
-            `color-mix(in srgb, ${primary} 8%, #f5f7f6)`
-        );
-        root.style.setProperty(
             '--background-soft',
-            `color-mix(in srgb, ${primary} 14%, #eef2f0)`
-        );
-        root.style.setProperty(
             '--background-accent',
-            `color-mix(in srgb, ${primary} 20%, #e6efea)`
-        );
-        root.style.setProperty('--card-background', '#ffffff');
+            '--card-background',
+        ].forEach(function (key) {
+            root.style.removeProperty(key);
+        });
     }
 
     function applyPaletteVars(primary, isDark) {
@@ -124,7 +113,7 @@
                 ? `color-mix(in srgb, ${primary} 20%, #182126)`
                 : `color-mix(in srgb, ${primary} 14%, #ffffff)`
         );
-        applyShellBackgrounds(primary, isDark);
+        clearPwaShellInlineOverrides();
 
         root.classList.toggle(DARK_CLASS, isDark);
         if (g.document.body) {
@@ -219,5 +208,12 @@
     applyEarlyAppearance();
     g.addEventListener('pageshow', function (ev) {
         if (ev.persisted) applyEarlyAppearance();
+    });
+    g.addEventListener('diari-theme-changed', function (ev) {
+        if (!isPwaStandalone()) return;
+        const paletteId = resolvePaletteId();
+        const primary = PALETTES[paletteId] || PALETTES['theme-1'];
+        const isDark = ev && ev.detail && ev.detail.theme === 'dark';
+        applyPaletteVars(primary, isDark);
     });
 })(typeof window !== 'undefined' ? window : globalThis);

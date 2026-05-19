@@ -4384,3 +4384,59 @@ html.theme-dark .pwa-offline-model-status__bar {
         border-radius: 16px;
     }
 }
+
+/* PWA installed app — reminder time chevron inset (also in pwa.css; duplicated here for cache reliability) */
+@media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+    html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
+    html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
+        padding-right: 4.5rem !important;
+        text-align: center;
+    }
+
+    html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
+    html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
+        margin-right: 2.15rem !important;
+        transform: translateX(-16px) !important;
+        opacity: 0.92;
+        cursor: pointer;
+    }
+
+    /* PWA — personal info locked while offline (match notification prefs grey-out) */
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-card,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline {
+        opacity: 0.55;
+        filter: grayscale(0.2);
+    }
+
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-field__input,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-field__select,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__input,
+    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__select {
+        opacity: 0.5 !important;
+        pointer-events: none !important;
+        cursor: not-allowed !important;
+        background: color-mix(in srgb, var(--card-background, #182126) 88%, #6a7680) !important;
+        border-color: color-mix(in srgb, var(--border-color, #2f3b42) 70%, transparent) !important;
+        color: var(--text-muted, #91a6ae) !important;
+    }
+
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-detail-btn,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-detail-summary__change {
+        opacity: 0.45 !important;
+        pointer-events: none !important;
+        cursor: not-allowed !important;
+        filter: grayscale(0.35);
+    }
+
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-field,
+    body.page-profile .profile-account-detail-card.pwa-profile-personal-offline .profile-account-detail-footer {
+        pointer-events: none !important;
+    }
+}
