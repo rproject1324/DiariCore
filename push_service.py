@@ -20,9 +20,9 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v8"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v9"
 DISPATCH_WINDOW_MINUTES = max(
-    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
+    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "60"))
 )
 
 
@@ -349,8 +349,11 @@ def _entry_manila_date_key(entry: dict) -> str:
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(NOTIFY_TZ).strftime("%Y-%m-%d")
+            # Naive timestamps from the app are treated as Asia/Manila wall time (journal UX).
+            dt = dt.replace(tzinfo=NOTIFY_TZ)
+        else:
+            dt = dt.astimezone(NOTIFY_TZ)
+        return dt.strftime("%Y-%m-%d")
     except Exception:
         return ""
 
@@ -494,6 +497,34 @@ def clear_daily_reminder_state(user_id: int) -> None:
     ):
         state.pop(key, None)
     _save_push_state(user_id, state)
+
+
+def _why_not_daily_due(
+    prefs: dict,
+    entries: list[dict],
+    state: dict,
+    reminder: tuple[int, int] | None,
+    h: int,
+    m: int,
+    today_key: str,
+) -> str:
+    """Human-readable reason the daily Web Push is not firing this minute."""
+    if not prefs.get("dailyEnabled"):
+        return "daily_disabled"
+    if _has_entry_today_manila(entries):
+        return "has_entry_today"
+    if not reminder:
+        return "no_reminder_time_on_server"
+    if _daily_reminder_fired_today(state, today_key, reminder):
+        hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+        return f"already_sent_today_at_{hhmm}"
+    if not _reminder_due_in_window(h, m, reminder):
+        hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+        return (
+            f"outside_window manila_now={h:02d}:{m:02d} "
+            f"fires_{hhmm}_for_{DISPATCH_WINDOW_MINUTES}m"
+        )
+    return "due_now"
 
 
 def schedule_status_for_user(user_id: int) -> dict:
@@ -851,6 +882,18 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             ),
             "devices": len(subs),
         }
+        dbg["whyNotDue"] = _why_not_daily_due(
+            prefs, entries, state, reminder, h, m, today_key
+        )
+        user_summary.append(
+            {
+                "userId": user_id,
+                "reminderTimeUsed": dbg["reminderTimeUsed"],
+                "override": prefs["reminderTimeOverride"],
+                "whyNotDue": dbg["whyNotDue"],
+                "inWindow": dbg["inReminderWindow"],
+            }
+        )
 
         def _push_all(title: str, body: str, url: str) -> bool:
             nonlocal sent, errors, last_error
@@ -928,6 +971,9 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
 
         if state_dirty:
             _save_push_state(user_id, state)
+
+        if debug:
+            user_debug.append(dict(dbg))
 
     out = {
         "ok": True,

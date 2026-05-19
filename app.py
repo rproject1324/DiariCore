@@ -2472,9 +2472,13 @@ def api_push_subscribe():
         return jsonify({"success": False, "error": "Web Push is not configured on this server."}), 503
     if not db.upsert_push_subscription(user_id, sub, push_service.vapid_public_key()):
         return jsonify({"success": False, "error": "Could not save subscription."}), 500
+    # Do not merge reminderTimeOverride here — subscribe runs on every app open and the
+    # client often sends a default hour before Profile loads, wiping the user's real time.
     notif = data.get("notifications")
     if isinstance(notif, dict):
-        db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
+        safe = {k: v for k, v in notif.items() if k != "reminderTimeOverride"}
+        if safe:
+            db.merge_user_ui_preferences_json(user_id, {"notifications": safe})
     return jsonify({"success": True, "webPush": True}), 200
 
 
