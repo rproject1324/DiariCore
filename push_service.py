@@ -20,7 +20,10 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v4"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v5"
+DISPATCH_WINDOW_MINUTES = max(
+    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "5"))
+)
 
 
 def _load_templates() -> dict:
@@ -414,7 +417,9 @@ def _user_notification_prefs(user_id: int) -> dict:
         "dailyEnabled": n.get("dailyEnabled", True) is not False,
         "streakEnabled": n.get("streakEnabled", True) is not False,
         "insightEnabled": n.get("insightEnabled", True) is not False,
-        "reminderTimeOverride": (n.get("reminderTimeOverride") or "").strip(),
+        "reminderTimeOverride": (
+            (n.get("reminderTimeOverride") or n.get("reminderHHmm") or "").strip()
+        ),
     }
 
 
@@ -434,10 +439,11 @@ def _daily_reminder_fired_today(state: dict, today_key: str, reminder: tuple[int
     last = state.get("lastDailyReminder")
     if isinstance(last, dict):
         return last.get("dateKey") == today_key and last.get("hhmm") == hhmm
-    # Legacy: only date key (reset when reminder time changes via preferences API).
+    # Legacy: only date key — without hhmm do not block (user may have changed reminder time).
     if state.get("lastDailyReminderDateKey") == today_key:
         legacy_hhmm = str(state.get("lastDailyReminderHhmm") or "").strip()
-        return not legacy_hhmm or legacy_hhmm == hhmm
+        if legacy_hhmm:
+            return legacy_hhmm == hhmm
     return False
 
 
@@ -488,10 +494,10 @@ def schedule_status_for_user(user_id: int) -> dict:
         "reminderTimeOverride": prefs["reminderTimeOverride"],
         "reminderTimeUsed": hhmm,
         "reminderSource": (
-            "override"
-            if _parse_hhmm(prefs["reminderTimeOverride"])
-            else "most_active_hour"
+            "override" if _parse_hhmm(prefs["reminderTimeOverride"]) else "most_active_hour"
         ),
+        "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
+        "internalCronRequired": False,
         "dailyEnabled": prefs["dailyEnabled"],
         "hasEntryToday": has_entry,
         "dailyDueNow": due_now,
@@ -502,8 +508,8 @@ def schedule_status_for_user(user_id: int) -> dict:
         ),
         "subscribedDevices": devices,
         "needsCron": (
-            "POST /api/internal/push/dispatch every 1 minute (cron-job.org). "
-            "Test push works without cron; scheduled daily reminders do not."
+            "Server runs internal dispatch every 60s when deployed. "
+            "Optional: cron-job.org POST /api/internal/push/dispatch each minute."
         ),
     }
 
@@ -740,7 +746,7 @@ def _should_fire_insight(state: dict, entry: dict, today_key: str) -> bool:
     return h == 10 and m == 0 and entry_day != today_key
 
 
-def dispatch_due_notifications() -> dict:
+def dispatch_due_notifications(debug: bool = False) -> dict:
     """
     Called by cron every minute. Sends Web Push to subscribed PWA users.
     Returns summary stats.
@@ -758,6 +764,7 @@ def dispatch_due_notifications() -> dict:
     last_error = None
     skipped_entry_today = 0
     daily_due_users = 0
+    user_debug: list[dict] = []
 
     for user_id, subs in grouped.items():
         if not subs:
@@ -791,11 +798,11 @@ def dispatch_due_notifications() -> dict:
             if (
                 prefs["dailyEnabled"]
                 and reminder
-                and h == reminder[0]
-                and m == reminder[1]
+                and _reminder_due_in_window(h, m, reminder)
                 and not _daily_reminder_fired_today(state, today_key, reminder)
             ):
                 daily_due_users += 1
+                dbg["dailyFiring"] = True
                 if _push_all(
                     "A gentle journal nudge",
                     _build_daily_body(),
@@ -859,7 +866,13 @@ def dispatch_due_notifications() -> dict:
         "dateKey": today_key,
         "pushBackendVersion": PUSH_BACKEND_VERSION,
         "staleSubscriptionsPurged": purged,
+        "dailyDueUsers": daily_due_users,
+        "dispatchWindowMinutes": DISPATCH_WINDOW_MINUTES,
     }
+    if debug:
+        out["userDebug"] = user_debug
     if last_error:
         out["lastError"] = last_error
+    if daily_due_users > 0 and sent == 0:
+        out["hint"] = "Daily reminder was due but send failed — check lastError."
     return out

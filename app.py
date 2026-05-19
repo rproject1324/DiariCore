@@ -27,6 +27,7 @@ import input_security as insec
 import password_policy
 import space_nlp
 import push_service
+import push_scheduler
 
 ENTRY_WORD_MAX = int(os.environ.get("ENTRY_WORD_MAX", "300"))
 
@@ -177,6 +178,7 @@ def _cleanup_removed_entry_uploads(old_urls: list[str], new_urls: list[str]) -> 
 
 
 app = Flask(__name__)
+push_scheduler.start()
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.config["JSON_SORT_KEYS"] = False
 app.secret_key = os.environ.get("SECRET_KEY", "diaricore-dev-secret")
@@ -2507,7 +2509,8 @@ def api_push_preferences():
     new_prefs = push_service._user_notification_prefs(user_id)
     if old_prefs.get("reminderTimeOverride") != new_prefs.get("reminderTimeOverride"):
         push_service.clear_daily_reminder_state(user_id)
-    return jsonify({"success": True, "schedule": push_service.schedule_status_for_user(user_id)}), 200
+    schedule = push_service.schedule_status_for_user(user_id)
+    return jsonify({"success": True, "schedule": schedule}), 200
 
 
 @app.route("/api/push/schedule-status", methods=["GET"])
@@ -2569,7 +2572,8 @@ def api_internal_push_dispatch():
     _, err = _require_push_cron_secret()
     if err:
         return err
-    result = push_service.dispatch_due_notifications()
+    debug = request.args.get("debug") == "1"
+    result = push_service.dispatch_due_notifications(debug=debug)
     return jsonify({"success": True, **result}), 200
 
 
