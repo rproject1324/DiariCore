@@ -32,48 +32,134 @@ def _load_templates() -> dict:
 
 
 def vapid_public_key() -> str | None:
-    return (os.environ.get("VAPID_PUBLIC_KEY") or "").strip() or None
+    return (os.environ.get("VAPID_PUBLIC_KEY") or "").strip().strip('"').strip("'") or None
 
 
 def vapid_private_key() -> str | None:
-    return _normalized_vapid_private_key()
-
-
-def _normalized_vapid_private_key() -> str | None:
-    """
-    pywebpush needs PEM or a path. Railway env often has either PEM (with \\n) or
-    legacy 32-byte base64 from scripts/generate_vapid_keys.py — convert the latter.
-    """
-    raw = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip()
-    if not raw:
+    v = _get_vapid()
+    if not v:
         return None
-    if "\\n" in raw:
-        raw = raw.replace("\\n", "\n")
-    if "BEGIN" in raw and "PRIVATE KEY" in raw:
-        return raw
     try:
-        import base64
+        pem = v.private_pem()
+        return pem.decode() if isinstance(pem, bytes) else str(pem)
+    except Exception:
+        return None
+
+
+def _decode_b64_key(raw: str) -> bytes | None:
+    import base64
+
+    cleaned = (raw or "").strip().strip('"').strip("'")
+    if not cleaned:
+        return None
+    pad = "=" * ((4 - len(cleaned) % 4) % 4)
+    for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            return decoder(cleaned + pad)
+        except Exception:
+            continue
+    return None
+
+
+def _b64_private_to_pem(raw: str) -> str | None:
+    try:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import ec
 
-        pad = "=" * ((4 - len(raw) % 4) % 4)
-        key_bytes = base64.urlsafe_b64decode(raw + pad)
-        private_key = None
+        key_bytes = _decode_b64_key(raw)
+        if not key_bytes:
+            return None
         if len(key_bytes) == 32:
             private_key = ec.derive_private_key(
                 int.from_bytes(key_bytes, "big"), ec.SECP256R1()
             )
-        elif len(key_bytes) == 65 and key_bytes[0] == 0x04:
+        else:
             return None
-        if private_key is not None:
-            return private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            ).decode()
+        return private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
     except Exception:
-        pass
-    return raw
+        return None
+
+
+_vapid_instance = None
+
+
+def _get_vapid():
+    """Load VAPID signing key once (PEM or legacy base64 private on Railway)."""
+    global _vapid_instance
+    if _vapid_instance is not None:
+        return _vapid_instance
+
+    raw_priv = (os.environ.get("VAPID_PRIVATE_KEY") or "").strip().strip('"').strip("'")
+    raw_pub = vapid_public_key()
+    if not raw_priv:
+        return None
+
+    try:
+        from py_vapid import Vapid01
+    except ImportError:
+        return None
+
+    v = Vapid01()
+    try:
+        if "BEGIN" in raw_priv:
+            pem = raw_priv.replace("\\n", "\n")
+            v.from_pem(pem.encode() if isinstance(pem, str) else pem)
+        else:
+            try:
+                v.from_string(private_key=raw_priv, public_key=raw_pub or None)
+            except Exception:
+                pem = _b64_private_to_pem(raw_priv)
+                if not pem:
+                    return None
+                v.from_pem(pem.encode())
+        _vapid_instance = v
+        return v
+    except Exception:
+        pem = _b64_private_to_pem(raw_priv)
+        if pem:
+            try:
+                v.from_pem(pem.encode())
+                _vapid_instance = v
+                return v
+            except Exception:
+                pass
+    return None
+
+
+def push_health() -> dict:
+    """Diagnostics for Railway / support (no secrets)."""
+    pub = vapid_public_key()
+    v = _get_vapid()
+    pem_ok = False
+    if v:
+        try:
+            pem = v.private_pem()
+            pem_ok = bool(pem and (b"BEGIN" in pem if isinstance(pem, bytes) else "BEGIN" in str(pem)))
+        except Exception:
+            pem_ok = False
+    try:
+        from pywebpush import webpush  # noqa: F401
+
+        pywebpush_ok = True
+    except ImportError:
+        pywebpush_ok = False
+    subs = db.list_push_subscriptions_grouped_by_user()
+    return {
+        "configured": bool(pub and v),
+        "publicKeySet": bool(pub),
+        "privateKeySignable": pem_ok,
+        "pywebpushInstalled": pywebpush_ok,
+        "subscribedUsers": len(subs),
+        "subscribedDevices": sum(len(s) for s in subs.values()),
+    }
+
+
+def _normalized_vapid_private_key() -> str | None:
+    return vapid_private_key()
 
 
 def vapid_claim_email() -> str:
@@ -84,7 +170,8 @@ def vapid_claim_email() -> str:
 
 
 def push_configured() -> bool:
-    return bool(vapid_public_key() and vapid_private_key())
+    h = push_health()
+    return bool(h.get("configured") and h.get("privateKeySignable"))
 
 
 def _manila_now() -> datetime:
@@ -304,21 +391,20 @@ def send_web_push(
     subscription: dict, title: str, body: str, url: str = "/write-entry.html"
 ) -> tuple[bool, str | None]:
     """Returns (ok, error_message)."""
-    if not push_configured():
-        return False, "VAPID not configured"
-    private = vapid_private_key()
-    if not private or "BEGIN" not in private:
-        return False, "VAPID_PRIVATE_KEY must be PEM (re-run scripts/generate_vapid_keys.py)"
+    vapid = _get_vapid()
+    if not vapid:
+        return False, "VAPID keys invalid — set VAPID_PRIVATE_KEY to PEM from scripts/generate_vapid_keys.py"
     try:
         from pywebpush import WebPushException, webpush
     except ImportError:
         return False, "pywebpush not installed on server"
     payload = json.dumps({"title": title, "body": body, "url": url})
     try:
+        pem = vapid.private_pem()
         webpush(
             subscription_info=subscription,
             data=payload,
-            vapid_private_key=private,
+            vapid_private_key=pem,
             vapid_claims={"sub": vapid_claim_email()},
         )
         return True, None

@@ -221,15 +221,12 @@
         if (result === 'granted' && global.DiariPwaWebPush?.subscribeWebPush) {
             try {
                 await global.DiariPwaWebPush.subscribeWebPush();
-                if (global.DiariPwaNotifications?.stopScheduler) {
-                    global.DiariPwaNotifications.stopScheduler();
-                }
-                if (global.DiariPwaWebPush?.sendTestPush) {
-                    const test = await global.DiariPwaWebPush.sendTestPush();
-                    if (test && test.ok) {
-                        console.info('[DiariPwa] Test push sent.');
-                    } else if (test && test.results) {
-                        console.warn('[DiariPwa] Test push failed:', test);
+                if (global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
+                    const ok = await global.DiariPwaWebPush.confirmWebPushWithServerTest();
+                    if (!ok) {
+                        console.warn(
+                            '[DiariPwa] Server push not confirmed — local reminders stay active as backup.'
+                        );
                     }
                 }
             } catch (e) {
@@ -362,13 +359,15 @@
                 await requestPermissionIfNeeded();
             } else if (
                 Notification?.permission === 'granted' &&
-                global.DiariPwaWebPush?.subscribeWebPush &&
-                !global.DiariPwaWebPush.isWebPushActive()
+                global.DiariPwaWebPush?.subscribeWebPush
             ) {
                 try {
                     await global.DiariPwaWebPush.subscribeWebPush();
+                    if (global.DiariPwaWebPush?.confirmWebPushWithServerTest) {
+                        await global.DiariPwaWebPush.confirmWebPushWithServerTest();
+                    }
                 } catch (_) {
-                    /* fall back to local scheduler */
+                    /* local scheduler remains backup */
                 }
             }
             if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {

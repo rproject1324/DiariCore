@@ -88,13 +88,26 @@
             throw new Error(data.error || 'Subscribe failed');
         }
 
+        global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
+        return true;
+    }
+
+    async function confirmWebPushWithServerTest() {
+        const test = await sendTestPush();
+        if (test && test.ok) {
+            try {
+                global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+            } catch (_) {
+                /* ignore */
+            }
+            return true;
+        }
         try {
-            global.localStorage.setItem(WEB_PUSH_ACTIVE_KEY, '1');
+            global.localStorage.removeItem(WEB_PUSH_ACTIVE_KEY);
         } catch (_) {
             /* ignore */
         }
-        global.dispatchEvent(new CustomEvent('diari-web-push-subscribed'));
-        return true;
+        return false;
     }
 
     async function sendTestPush() {
@@ -134,6 +147,7 @@
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
+        confirmWebPushWithServerTest,
         sendTestPush,
         syncNotificationPrefsToServer,
         buildNotificationPrefsPayload,
