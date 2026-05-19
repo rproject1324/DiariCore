@@ -2494,7 +2494,11 @@ def api_push_subscribe():
     )
     notif = data.get("notifications")
     if isinstance(notif, dict):
+        old_prefs = push_service._user_notification_prefs(user_id)
         db.merge_user_ui_preferences_json(user_id, {"notifications": notif})
+        new_prefs = push_service._user_notification_prefs(user_id)
+        if old_prefs.get("reminderTimeOverride") != new_prefs.get("reminderTimeOverride"):
+            push_service.clear_daily_reminder_state(user_id)
     return jsonify(
         {
             "success": True,

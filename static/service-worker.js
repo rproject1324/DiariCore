@@ -2,7 +2,7 @@
  * DiariCore PWA service worker — offline app shell + cached static assets.
  * API routes are never cached (session/auth stay fresh).
  */
-const CACHE_NAME = 'diaricore-pwa-v84';
+const CACHE_NAME = 'diaricore-pwa-v85';
 const PWA_CACHE_PREFIX = 'diaricore-pwa-';
 
 function shouldDeleteCacheOnActivate(name) {
@@ -85,6 +85,7 @@ self.addEventListener('push', (event) => {
 
     event.waitUntil(
         (async () => {
+            let shown = false;
             try {
                 const notifOpts = {
                     body,
@@ -103,8 +104,14 @@ self.addEventListener('push', (event) => {
                     /* ignore */
                 }
                 await self.registration.showNotification(title, notifOpts);
+                shown = true;
             } catch (e) {
                 console.warn('[PWA SW] showNotification failed:', e);
+            }
+            /* Only ack when the OS actually displayed the banner — prevents false
+               "already_confirmed_on_phone" when FCM delivered but no banner appeared. */
+            if (!shown) {
+                return;
             }
             fetch('/api/push/delivery-ack', {
                 method: 'POST',

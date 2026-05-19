@@ -20,7 +20,7 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v22"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v23"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
@@ -568,12 +568,10 @@ def _ack_confirms_daily_reminder(
 def _daily_reminder_confirmed_on_phone(
     state: dict, today_key: str, reminder: tuple[int, int]
 ) -> bool:
-    """True when the service worker reported today's daily banner at/after reminder time."""
-    if _ack_confirms_daily_reminder(state, today_key, reminder):
-        return True
+    """True only when the service worker reported showing today's daily banner."""
     if _pending_daily_matches(state, today_key, reminder):
         return False
-    return _daily_reminder_fired_today(state, today_key, reminder)
+    return _ack_confirms_daily_reminder(state, today_key, reminder)
 
 
 def _reconcile_legacy_daily_without_ack(
