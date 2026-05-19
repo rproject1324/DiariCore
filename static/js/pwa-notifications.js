@@ -273,7 +273,16 @@
         global.addEventListener('diari-entries-cache-updated', () => kickWorkerCheck());
         global.addEventListener('diari-remote-state-refreshed', () => kickWorkerCheck());
         global.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') kickWorkerCheck();
+            if (document.visibilityState === 'visible') {
+                kickWorkerCheck();
+            } else if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
+                global.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
+            }
+        });
+        global.addEventListener('pagehide', () => {
+            if (global.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
+                global.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
+            }
         });
         global.addEventListener('online', () => kickWorkerCheck());
     }

@@ -20,9 +20,9 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v6"
+PUSH_BACKEND_VERSION = "2026-05-19-schedule-v7"
 DISPATCH_WINDOW_MINUTES = max(
-    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "5"))
+    1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "15"))
 )
 
 
@@ -270,6 +270,15 @@ def push_health() -> dict:
         "subscribedDevices": sum(len(s) for s in subs.values()),
         "staleSubscriptionCount": count_stale_push_subscriptions(),
     }
+
+
+def push_scheduler_health() -> dict:
+    try:
+        import push_scheduler
+
+        return push_scheduler.status()
+    except Exception:
+        return {"schedulerStarted": False}
 
 
 def _normalized_vapid_private_key() -> str | None:

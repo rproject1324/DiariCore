@@ -29,15 +29,27 @@
         return out;
     }
 
-    function buildNotificationPrefsPayload() {
+    function getEffectiveReminderHHmm() {
+        try {
+            if (global.DiariPwaNotifications?.getEffectiveReminderHHmm) {
+                const t = global.DiariPwaNotifications.getEffectiveReminderHHmm();
+                if (t && /^\d{2}:\d{2}$/.test(t)) return t;
+            }
+        } catch (_) {
+            /* ignore */
+        }
         const override = global.localStorage.getItem('diariCoreReminderTimeUserOverride');
+        if (override && /^\d{2}:\d{2}$/.test(override.trim())) return override.trim();
+        return '09:00';
+    }
+
+    function buildNotificationPrefsPayload() {
         return {
             notifications: {
                 dailyEnabled: global.localStorage.getItem('diariCorePwaDailyRemindersEnabled') !== '0',
                 streakEnabled: global.localStorage.getItem('diariCorePwaStreakRemindersEnabled') !== '0',
                 insightEnabled: global.localStorage.getItem('diariCorePwaInsightFollowupsEnabled') !== '0',
-                reminderTimeOverride:
-                    override && /^\d{2}:\d{2}$/.test(override.trim()) ? override.trim() : '',
+                reminderTimeOverride: getEffectiveReminderHHmm(),
             },
         };
     }
@@ -120,20 +132,43 @@
         return res.json().catch(() => ({}));
     }
 
+    function syncNotificationPrefsToServerBeacon() {
+        if (!isPwaStandalone()) return false;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return false;
+        }
+        const body = JSON.stringify(buildNotificationPrefsPayload());
+        try {
+            if (navigator.sendBeacon) {
+                const blob = new Blob([body], { type: 'application/json' });
+                return navigator.sendBeacon('/api/push/preferences', blob);
+            }
+        } catch (_) {
+            /* ignore */
+        }
+        return false;
+    }
+
     async function syncNotificationPrefsToServer() {
         if (!isPwaStandalone()) return;
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
             return;
         }
+        const body = buildNotificationPrefsPayload();
         try {
-            await fetch('/api/push/preferences', {
+            const res = await fetch('/api/push/preferences', {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(buildNotificationPrefsPayload()),
+                body: JSON.stringify(body),
             });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                console.warn('[DiariPwaWebPush] preferences sync failed', data);
+            }
+            return data;
         } catch (_) {
-            /* ignore */
+            syncNotificationPrefsToServerBeacon();
         }
     }
 
@@ -152,6 +187,8 @@
         confirmWebPushWithServerTest,
         sendTestPush,
         syncNotificationPrefsToServer,
+        syncNotificationPrefsToServerBeacon,
         buildNotificationPrefsPayload,
+        getEffectiveReminderHHmm,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

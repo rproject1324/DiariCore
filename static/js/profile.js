@@ -2733,6 +2733,9 @@ function initializeReminderTimePreference() {
         if (window.DiariPwaNotifications?.syncPrefsToWorker) {
             void window.DiariPwaNotifications.syncPrefsToWorker();
         }
+        if (window.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
+            window.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
+        }
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
             void window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }

@@ -178,7 +178,6 @@ def _cleanup_removed_entry_uploads(old_urls: list[str], new_urls: list[str]) -> 
 
 
 app = Flask(__name__)
-push_scheduler.start()
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.config["JSON_SORT_KEYS"] = False
 app.secret_key = os.environ.get("SECRET_KEY", "diaricore-dev-secret")
@@ -2453,6 +2452,7 @@ def api_push_vapid_public_key():
     """PWA Web Push: public VAPID key for PushManager.subscribe."""
     key = push_service.vapid_public_key()
     health = push_service.push_health()
+    health.update(push_service.push_scheduler_health())
     if not key:
         return jsonify({"success": False, "error": "Web Push is not configured on this server.", **health}), 503
     return jsonify({"success": True, "publicKey": key, **health}), 200
@@ -2497,7 +2497,13 @@ def api_push_preferences():
     user_id, auth_err = _require_authenticated_user()
     if auth_err:
         return auth_err
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not data and request.data:
+        try:
+            data = json.loads(request.data.decode("utf-8"))
+        except Exception:
+            data = {}
+    data = data or {}
     patch = {}
     if "notifications" in data and isinstance(data["notifications"], dict):
         patch["notifications"] = data["notifications"]
