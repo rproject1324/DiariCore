@@ -533,7 +533,15 @@ def _seconds_since_iso(ts: str | None) -> float | None:
 def _ack_confirms_daily_reminder(
     state: dict, today_key: str, reminder: tuple[int, int]
 ) -> bool:
-    """Delivery ack must be for today's daily tag at or after the reminder time."""
+    """Delivery ack counts only for this reminder time's 15-minute window."""
+    hhmm = f"{reminder[0]:02d}:{reminder[1]:02d}"
+    last = state.get("lastDailyReminder")
+    if (
+        isinstance(last, dict)
+        and last.get("dateKey") == today_key
+        and last.get("hhmm") == hhmm
+    ):
+        return True
     ack = state.get("lastDeliveryAck")
     if not isinstance(ack, dict):
         return False
@@ -549,9 +557,9 @@ def _ack_confirms_daily_reminder(
         return False
     if _manila_date_key(ack_manila) != today_key:
         return False
-    ah, am = ack_manila.hour, ack_manila.minute
-    rh, rm = reminder
-    return (ah, am) >= (rh, rm)
+    return _reminder_due_in_window(
+        ack_manila.hour, ack_manila.minute, reminder
+    )
 
 
 def _daily_reminder_confirmed_on_phone(
@@ -587,9 +595,7 @@ def _reconcile_legacy_daily_without_ack(
 
 def _should_send_daily_now(state: dict, today_key: str, reminder: tuple[int, int]) -> tuple[bool, str | None]:
     """Whether cron should POST another daily push (one retry only if phone never acked)."""
-    if _ack_confirms_daily_reminder(state, today_key, reminder):
-        return False, "already_confirmed_on_phone"
-    if _daily_reminder_confirmed_on_phone(state, today_key, reminder):
+    if _daily_reminder_fired_today(state, today_key, reminder):
         return False, "already_confirmed_on_phone"
     pending = _pending_daily_matches(state, today_key, reminder)
     if not pending:
@@ -672,6 +678,9 @@ def clear_daily_reminder_state(user_id: int) -> None:
         "pendingDailyReminder",
     ):
         state.pop(key, None)
+    ack = state.get("lastDeliveryAck")
+    if isinstance(ack, dict) and str(ack.get("tag") or "") == "diari-daily-reminder":
+        state.pop("lastDeliveryAck", None)
     _save_push_state(user_id, state)
 
 

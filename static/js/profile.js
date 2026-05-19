@@ -2763,7 +2763,35 @@ function buildPushNotificationPrefsPayloadForServer() {
 }
 
 
+async function ensureDiariPwaWebPushReady(timeoutMs) {
+    if (window.DiariPwaWebPush?.registerPushForReminders) {
+        return window.DiariPwaWebPush;
+    }
+    if (window.DiariPwaWebPush?.waitForReady) {
+        return window.DiariPwaWebPush.waitForReady(timeoutMs || 8000);
+    }
+    return null;
+}
+
+/** Register this phone on the server (retries). Needed for reminders when the app is closed. */
+async function registerPushFromProfile(options) {
+    if (!isPwaProfileContext()) {
+        return { ok: false, error: 'not_pwa' };
+    }
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+        return { ok: false, error: 'notifications_not_granted' };
+    }
+    const push = await ensureDiariPwaWebPushReady(8000);
+    if (!push?.registerPushForReminders) {
+        return { ok: false, error: 'push_module_unavailable' };
+    }
+    return push.registerPushForReminders(options || { quiet: true });
+}
+
 async function syncPushNotificationPrefsToServerFromProfile() {
+    if (isPwaProfileContext() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        await registerPushFromProfile({ quiet: true });
+    }
     try {
         const res = await fetch('/api/push/preferences', {
             method: 'POST',
@@ -2785,7 +2813,7 @@ function initializeReminderTimePreference() {
     if (!input || input.dataset.reminderTimeBound === '1') return;
     input.dataset.reminderTimeBound = '1';
     hydrateProfileReminderTimeInput();
-    function onReminderTimeChanged() {
+    async function onReminderTimeChanged() {
         const suggested = computeSuggestedReminderTimeHHmm();
         try {
             if (input.value === suggested) {
@@ -2796,6 +2824,16 @@ function initializeReminderTimePreference() {
         } catch (_) { /* ignore */ }
         if (window.DiariPwaNotifications?.syncPrefsToWorker) {
             void window.DiariPwaNotifications.syncPrefsToWorker();
+        }
+        if (isPwaProfileContext() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            const reg = await registerPushFromProfile({ quiet: true });
+            if (!reg.ok && reg.error && reg.error !== 'not_pwa') {
+                showNotification(
+                    'Could not register this phone for closed-app reminders. Open Preferences while online, then try again.',
+                    'warning',
+                    7000
+                );
+            }
         }
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServerBeacon) {
             window.DiariPwaWebPush.syncNotificationPrefsToServerBeacon();
@@ -2855,6 +2893,14 @@ function initializePreferenceToggles() {
                         localStorage.setItem('diariCorePwaDailyRemindersEnabled', isChecked ? '1' : '0');
                     } catch (_) {
                         /* ignore */
+                    }
+                    if (isChecked && isPwaProfileContext() && Notification?.permission === 'default') {
+                        if (window.DiariPwaNotifications?.requestPermissionIfNeeded) {
+                            await window.DiariPwaNotifications.requestPermissionIfNeeded();
+                        }
+                    }
+                    if (isChecked && isPwaProfileContext() && Notification?.permission === 'granted') {
+                        await registerPushFromProfile({ quiet: true });
                     }
                     if (window.DiariPwaNotifications?.syncPrefsToWorker) {
                         void window.DiariPwaNotifications.syncPrefsToWorker();
@@ -3091,14 +3137,9 @@ function openProfileSection(sectionKey) {
             if (
                 isPwaProfileContext() &&
                 typeof Notification !== 'undefined' &&
-                Notification.permission === 'granted' &&
-                window.DiariPwaWebPush?.syncPushSubscriptionToServer
+                Notification.permission === 'granted'
             ) {
-                try {
-                    await window.DiariPwaWebPush.syncPushSubscriptionToServer();
-                } catch (_) {
-                    /* ignore */
-                }
+                await registerPushFromProfile({ quiet: true });
             }
             void syncPushNotificationPrefsToServerFromProfile();
         })();

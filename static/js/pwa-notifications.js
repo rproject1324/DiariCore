@@ -404,12 +404,12 @@
                 await requestPermissionIfNeeded();
             } else if (
                 Notification?.permission === 'granted' &&
-                global.DiariPwaWebPush?.syncPushSubscriptionToServer
+                global.DiariPwaWebPush?.registerPushForReminders
             ) {
                 try {
-                    await global.DiariPwaWebPush.syncPushSubscriptionToServer();
+                    await global.DiariPwaWebPush.registerPushForReminders({ quiet: true });
                 } catch (e) {
-                    console.warn('[DiariPwaNotifications] sync push to server failed:', e);
+                    console.warn('[DiariPwaNotifications] register push failed:', e);
                 }
             }
             if (global.DiariPwaWebPush?.syncNotificationPrefsToServer) {

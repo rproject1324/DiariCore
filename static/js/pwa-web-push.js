@@ -267,14 +267,44 @@
     }
 
     async function subscribeWebPush() {
-        if (!isPwaStandalone()) return false;
-        try {
-            const result = await syncPushSubscriptionToServer();
-            return !!result.ok;
-        } catch (e) {
-            console.warn('[DiariPwaWebPush] syncPushSubscriptionToServer failed:', e);
-            return false;
+        const result = await registerPushForReminders({ quiet: true });
+        return !!result.ok;
+    }
+
+    /**
+     * Ensure this phone is registered on the server (retries). Required for closed-app reminders.
+     */
+    async function registerPushForReminders(options) {
+        const quiet = !options || options.quiet !== false;
+        if (!isPwaStandalone()) {
+            return { ok: false, error: 'Open DiariCore from your home-screen app, not a browser tab.' };
         }
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return {
+                ok: false,
+                error: 'Allow notifications for Chrome in Android Settings, then reopen DiariCore.',
+            };
+        }
+        let lastError = 'Could not register this phone';
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                const result = await syncPushSubscriptionToServer();
+                const devices =
+                    result.subscribedDevices ??
+                    result.schedule?.subscribedDevices ??
+                    0;
+                if (result.ok && devices >= 1) {
+                    return { ok: true, subscribedDevices: devices };
+                }
+            } catch (e) {
+                lastError = e && e.message ? e.message : lastError;
+                if (!quiet) {
+                    console.warn('[DiariPwaWebPush] register attempt', attempt + 1, e);
+                }
+            }
+            await delay(600);
+        }
+        return { ok: false, error: lastError };
     }
 
     /** Force new FCM token (only when user taps "Use this phone only"). */
@@ -353,6 +383,7 @@
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
             return;
         }
+        await registerPushForReminders({ quiet: true });
         const body = buildNotificationPrefsPayload();
         try {
             const res = await apiFetch('/api/push/preferences', {
@@ -492,6 +523,7 @@
         isPwaStandalone,
         isWebPushActive,
         subscribeWebPush,
+        registerPushForReminders,
         syncPushSubscriptionToServer,
         renewPushSubscription,
         registerThisPhoneOnly,
