@@ -10,9 +10,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         window.DiariOffline.wirePwaPageAutoSync(initializeEmotionalSupportFromData);
     }
 
-    if (window.DiariOffline?.awaitServerState) {
-        await window.DiariOffline.awaitServerState();
-    }
     try {
     initializeEmotionalSupportFromData();
     // Initialize components
@@ -21,6 +18,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeInteractiveElements();
     animateProgressBars();
     initializeMobileCarousel();
+    setTimeout(() => {
+        void (async () => {
+            try {
+                if (window.DiariOffline?.awaitServerState) {
+                    await window.DiariOffline.awaitServerState();
+                    initializeEmotionalSupportFromData();
+                }
+            } catch (error) {
+                console.warn('Suggestions background sync failed:', error);
+            }
+        })();
+    }, 0);
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

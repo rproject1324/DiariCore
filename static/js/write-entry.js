@@ -2,12 +2,20 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariOffline?.awaitServerState) {
-        await window.DiariOffline.awaitServerState();
-    }
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
     }
+    setTimeout(() => {
+        void (async () => {
+            try {
+                if (window.DiariOffline?.awaitServerState) {
+                    await window.DiariOffline.awaitServerState();
+                }
+            } catch (error) {
+                console.warn('Write Entry background sync failed:', error);
+            }
+        })();
+    }, 0);
 
     // Initialize variables
     let selectedFeeling = null;

@@ -28,9 +28,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         window.DiariOffline.wirePwaPageAutoSync(refreshProfileAfterPwaSync);
     }
 
-    if (window.DiariOffline?.awaitServerState) {
-        await window.DiariOffline.awaitServerState();
-    }
+    // Cache-first paint: render immediately, refresh from server in background.
     refreshProfileAfterPwaSync();
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
@@ -43,6 +41,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeProfileSectionNavigation();
     initializeAccountDetailPanels();
     applyPwaProfilePersonalOfflineState();
+    setTimeout(() => {
+        void (async () => {
+            try {
+                if (window.DiariOffline?.awaitServerState) {
+                    await window.DiariOffline.awaitServerState();
+                    refreshProfileAfterPwaSync();
+                }
+            } catch (error) {
+                console.warn('Profile background sync failed:', error);
+            }
+        })();
+    }, 0);
 });
 
 let profileSecPwLiveInst = null;

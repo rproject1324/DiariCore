@@ -408,28 +408,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
         window.DiariOffline.registerPageRefreshHandler(refreshInsightsFromSyncedStorage);
     }
-    if (window.DiariOffline?.awaitServerState) {
-        await window.DiariOffline.awaitServerState();
-    } else {
-    await syncInsightsEntriesFromApi();
-    }
+    refreshInsightsFromSyncedStorage();
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
     }
-    INSIGHTS_ENTRIES = JSON.parse(localStorage.getItem('diariCoreEntries') || '[]').filter((e) => e && e.date);
-    HAS_INSIGHTS_DATA = INSIGHTS_ENTRIES.length > 0;
-    applyInsightsEmptyState();
-    // Initialize Charts
-    initializeWeeklyMoodChart();
-    initializeWeeklyMoodChartDesktop();
-    initializeEmotionPieChart();
-    initializeEmotionPieChartMobile();
-    initializeMoodByTagChart();
-    
-    // Load Data
-    loadInsightsData();
-    
-    await loadEmotionTriggersDashboard();
+
+    void loadEmotionTriggersDashboard();
 
     initializeInsightsHeroTabs();
 
@@ -444,6 +428,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshInsightsFromSyncedStorage);
     }
+    setTimeout(() => {
+        void (async () => {
+            try {
+                await syncInsightsEntriesFromApi();
+                refreshInsightsFromSyncedStorage();
+                await loadEmotionTriggersDashboard();
+            } catch (error) {
+                console.warn('Insights background sync failed:', error);
+            }
+        })();
+    }, 0);
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();
