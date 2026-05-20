@@ -50,29 +50,10 @@
         if (!isPwaShell()) return;
 
         const offline = isProfilePersonalOffline();
-        const root = global.document.documentElement;
         const panel = global.document.getElementById('profileSectionPersonalInfo');
-        const card = panel?.querySelector('.profile-account-detail-card');
-        const form = panel?.querySelector('.profile-account-detail-form');
 
-        if (root) {
-            root.classList.toggle('diari-pwa-offline', offline);
-        }
         if (panel) {
             panel.classList.toggle('pwa-profile-personal-offline', offline);
-        }
-        if (card) {
-            card.classList.toggle('pwa-profile-personal-offline', offline);
-            if (offline) {
-                card.setAttribute('inert', '');
-                card.setAttribute('aria-disabled', 'true');
-            } else {
-                card.removeAttribute('inert');
-                card.removeAttribute('aria-disabled');
-            }
-        }
-        if (form) {
-            form.classList.toggle('pwa-profile-personal-offline', offline);
         }
 
         FIELD_IDS.forEach(function (id) {

@@ -145,20 +145,12 @@ html.theme-dark .pwa-install-banner__inner {
     }
 }
 
-/* PWA Profile — reminder time picker arrow inset from right edge */
-html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
-html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-    padding-right: 3.85rem;
-    text-align: center;
-}
-
+/* PWA Profile — shift time picker chevron left only (do not widen the input box) */
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-    margin-right: 1.65rem;
-    margin-left: 0;
     cursor: pointer;
     opacity: 0.92;
-    transform: translateX(-6px);
+    transform: translateX(-10px);
 }
 
 /* PWA Profile — daily push needs internet; grey out when offline */
@@ -203,25 +195,16 @@ html[data-diari-pwa='standalone'] body.page-profile .profile-prefs-card--notific
     opacity: 0.5;
 }
 
-/* PWA Profile — personal info: grey out all fields + actions when offline */
+/* PWA Profile — personal info offline: same dimming as notification prefs (per control, not whole card) */
 html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
 html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
 html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
 html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
-html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
-html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
 html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
-html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change {
-    opacity: 0.45 !important;
-    pointer-events: none !important;
-    cursor: not-allowed !important;
-    filter: grayscale(0.2);
-}
-
-html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
-html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
-html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer,
-html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer {
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
+html.diari-pwa-standalone body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
+html[data-diari-pwa='standalone'] body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn {
+    opacity: 0.5;
     pointer-events: none;
 }
 
@@ -275,44 +258,17 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
         opacity: 0 !important;
     }
 
-    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
-        padding-right: 4.5rem !important;
-        text-align: center;
-    }
-
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        margin-right: 2.15rem !important;
-        margin-left: 0 !important;
-        transform: translateX(-16px) !important;
+        transform: translateX(-10px);
         cursor: pointer;
         opacity: 0.92;
     }
 
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__input,
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__select,
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-btn,
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-summary__change,
     body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
     body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change {
-        opacity: 0.42 !important;
-        pointer-events: none !important;
-        cursor: not-allowed !important;
-        filter: grayscale(0.25) !important;
-    }
-
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field,
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-footer,
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-detail-summary,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-footer,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary {
-        pointer-events: none !important;
-    }
-
-    html.diari-pwa-offline body.page-profile #profileSectionPersonalInfo .profile-account-field__input-wrap,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input-wrap {
-        opacity: 0.42 !important;
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
+    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn {
+        opacity: 0.5;
+        pointer-events: none;
     }
 }
