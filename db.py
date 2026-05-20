@@ -110,6 +110,30 @@ def _ensure_user_avatar_column(cur):
             cur.execute("ALTER TABLE users ADD COLUMN avatar_data_url TEXT")
 
 
+def _ensure_users_privacy_agreed_at_column(cur):
+    """Privacy notice consent timestamp (set at signup after user agrees in modal)."""
+    if USE_POSTGRES:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_agreed_at TIMESTAMP")
+    else:
+        cur.execute("PRAGMA table_info(users)")
+        cols = {str(r[1]).lower() for r in (cur.fetchall() or [])}
+        if "privacy_agreed_at" not in cols:
+            cur.execute("ALTER TABLE users ADD COLUMN privacy_agreed_at TEXT")
+
+
+def _ensure_pending_registrations_privacy_agreed_at_column(cur):
+    """Carry consent time from signup request through OTP verification to users row."""
+    if USE_POSTGRES:
+        cur.execute(
+            "ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS privacy_agreed_at TIMESTAMP"
+        )
+    else:
+        cur.execute("PRAGMA table_info(pending_registrations)")
+        cols = {str(r[1]).lower() for r in (cur.fetchall() or [])}
+        if "privacy_agreed_at" not in cols:
+            cur.execute("ALTER TABLE pending_registrations ADD COLUMN privacy_agreed_at TEXT")
+
+
 def _ensure_user_ui_preferences_column(cur):
     """JSON blob for cross-device UI: theme (light|dark) and paletteId (theme-1 … theme-10)."""
     if USE_POSTGRES:
@@ -487,6 +511,8 @@ def init_db():
         _ensure_journal_updated_at_column(cur)
         _ensure_user_tags_icon_column(cur)
         _ensure_user_avatar_column(cur)
+        _ensure_users_privacy_agreed_at_column(cur)
+        _ensure_pending_registrations_privacy_agreed_at_column(cur)
         _ensure_user_ui_preferences_column(cur)
         _ensure_user_totp_columns(cur)
         _ensure_login_totp_challenges_table(cur)
@@ -947,6 +973,7 @@ def store_pending_registration(
     birthday: str,
     otp_code: str,
     otp_expires_at,
+    privacy_agreed_at=None,
 ):
     email_norm = email.lower().strip()
     nickname_norm = nickname.strip()
@@ -959,8 +986,8 @@ def store_pending_registration(
             cur.execute(
                 """
                 INSERT INTO pending_registrations
-                (email, nickname, password_hash, first_name, last_name, gender, birthday, otp_code, otp_expires_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (email, nickname, password_hash, first_name, last_name, gender, birthday, otp_code, otp_expires_at, privacy_agreed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (email) DO UPDATE SET
                     nickname = EXCLUDED.nickname,
                     password_hash = EXCLUDED.password_hash,
@@ -970,16 +997,34 @@ def store_pending_registration(
                     birthday = EXCLUDED.birthday,
                     otp_code = EXCLUDED.otp_code,
                     otp_expires_at = EXCLUDED.otp_expires_at,
+                    privacy_agreed_at = EXCLUDED.privacy_agreed_at,
                     created_at = CURRENT_TIMESTAMP
                 """,
-                (email_norm, nickname_norm, password_hash, first_name.strip(), last_name.strip(), gender, birthday, otp_code, otp_expires_at),
+                (
+                    email_norm,
+                    nickname_norm,
+                    password_hash,
+                    first_name.strip(),
+                    last_name.strip(),
+                    gender,
+                    birthday,
+                    otp_code,
+                    otp_expires_at,
+                    privacy_agreed_at,
+                ),
             )
         else:
+            pa_sqlite = privacy_agreed_at
+            if pa_sqlite is not None and not isinstance(pa_sqlite, str):
+                try:
+                    pa_sqlite = pa_sqlite.isoformat()
+                except Exception:
+                    pa_sqlite = str(pa_sqlite)
             cur.execute(
                 """
                 INSERT INTO pending_registrations
-                (email, nickname, password_hash, first_name, last_name, gender, birthday, otp_code, otp_expires_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                (email, nickname, password_hash, first_name, last_name, gender, birthday, otp_code, otp_expires_at, privacy_agreed_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(email) DO UPDATE SET
                     nickname = excluded.nickname,
                     password_hash = excluded.password_hash,
@@ -989,6 +1034,7 @@ def store_pending_registration(
                     birthday = excluded.birthday,
                     otp_code = excluded.otp_code,
                     otp_expires_at = excluded.otp_expires_at,
+                    privacy_agreed_at = excluded.privacy_agreed_at,
                     created_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -1001,6 +1047,7 @@ def store_pending_registration(
                     birthday,
                     otp_code,
                     str(otp_expires_at),
+                    pa_sqlite,
                 ),
             )
         conn.commit()
@@ -1061,15 +1108,34 @@ def delete_pending_registration(email: str):
         conn.close()
 
 
+def _privacy_agreed_at_from_pending(pending: dict):
+    raw = pending.get("privacy_agreed_at")
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        dt = raw
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
 def create_user_from_pending(pending: dict):
     conn = get_conn()
     cur = conn.cursor()
     try:
+        privacy_at = _privacy_agreed_at_from_pending(pending)
         if USE_POSTGRES:
             cur.execute(
                 """
-                INSERT INTO users (nickname, email, password_hash, first_name, last_name, gender, birthday)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO users (nickname, email, password_hash, first_name, last_name, gender, birthday, privacy_agreed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, nickname, email, first_name, last_name, gender, birthday, created_at, avatar_data_url, totp_enabled, ui_preferences_json
                 """,
                 (
@@ -1080,15 +1146,22 @@ def create_user_from_pending(pending: dict):
                     (pending.get("last_name") or "").strip(),
                     pending.get("gender"),
                     pending.get("birthday"),
+                    privacy_at,
                 ),
             )
             row = cur.fetchone()
             conn.commit()
             return True, row_to_dict(row)
+        pa_sqlite = None
+        if privacy_at is not None:
+            try:
+                pa_sqlite = privacy_at.isoformat()
+            except Exception:
+                pa_sqlite = str(privacy_at)
         cur.execute(
             """
-            INSERT INTO users (nickname, email, password_hash, first_name, last_name, gender, birthday)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (nickname, email, password_hash, first_name, last_name, gender, birthday, privacy_agreed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 (pending.get("nickname") or "").strip(),
@@ -1098,6 +1171,7 @@ def create_user_from_pending(pending: dict):
                 (pending.get("last_name") or "").strip(),
                 pending.get("gender"),
                 pending.get("birthday"),
+                pa_sqlite,
             ),
         )
         uid = cur.lastrowid

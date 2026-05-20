@@ -318,6 +318,78 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
 
+    const privacyModal = document.getElementById('privacyConsentModal');
+    const privacyScrollArea = document.getElementById('privacyConsentScrollArea');
+    const privacyCheckbox = document.getElementById('privacyConsentCheckbox');
+    const privacyAgreeBtn = document.getElementById('privacyConsentAgreeBtn');
+    const privacyCancelBtn = document.getElementById('privacyConsentCancelBtn');
+    const privacyCloseBtn = document.getElementById('privacyConsentCloseBtn');
+    let privacyModalReturnFocus = null;
+    let privacyModalSubmitFn = null;
+
+    function syncPrivacyAgreeButton() {
+        if (!privacyAgreeBtn || !privacyCheckbox) return;
+        privacyAgreeBtn.disabled = !privacyCheckbox.checked;
+    }
+
+    function closePrivacyModal() {
+        if (!privacyModal || !privacyModal.classList.contains('is-open')) return;
+        privacyModalSubmitFn = null;
+        privacyModal.classList.remove('is-open');
+        privacyModal.setAttribute('aria-hidden', 'true');
+        document.documentElement.classList.remove('privacy-modal-open');
+        document.body.classList.remove('privacy-modal-open');
+        if (privacyCheckbox) privacyCheckbox.checked = false;
+        syncPrivacyAgreeButton();
+        const el = privacyModalReturnFocus;
+        privacyModalReturnFocus = null;
+        if (el && typeof el.focus === 'function') {
+            try {
+                el.focus();
+            } catch (_) {}
+        }
+    }
+
+    function openPrivacyModal(submitFn) {
+        if (!privacyModal || typeof submitFn !== 'function') return;
+        privacyModalReturnFocus = document.activeElement;
+        privacyModalSubmitFn = submitFn;
+        if (privacyCheckbox) privacyCheckbox.checked = false;
+        syncPrivacyAgreeButton();
+        if (privacyScrollArea) privacyScrollArea.scrollTop = 0;
+        privacyModal.classList.add('is-open');
+        privacyModal.setAttribute('aria-hidden', 'false');
+        document.documentElement.classList.add('privacy-modal-open');
+        document.body.classList.add('privacy-modal-open');
+        setTimeout(() => {
+            if (privacyCheckbox) {
+                try {
+                    privacyCheckbox.focus();
+                } catch (_) {}
+            }
+        }, 0);
+    }
+
+    if (privacyModal && privacyCheckbox && privacyAgreeBtn && privacyCancelBtn && privacyCloseBtn) {
+        privacyCheckbox.addEventListener('change', syncPrivacyAgreeButton);
+        privacyCancelBtn.addEventListener('click', () => closePrivacyModal());
+        privacyCloseBtn.addEventListener('click', () => closePrivacyModal());
+        privacyAgreeBtn.addEventListener('click', () => {
+            if (!privacyCheckbox.checked || !privacyModalSubmitFn) return;
+            const fn = privacyModalSubmitFn;
+            privacyModalSubmitFn = null;
+            closePrivacyModal();
+            fn();
+        });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'Escape') return;
+            if (!privacyModal.classList.contains('is-open')) return;
+            ev.preventDefault();
+            closePrivacyModal();
+        });
+    }
+
+
     if (signUpForm) {
         signUpForm.addEventListener('submit', async function (e) {
             e.preventDefault();
@@ -377,54 +449,65 @@ document.addEventListener('DOMContentLoaded', function () {
             const emailAvailable = await checkFieldAvailability('signUpEmail', email);
             if (!nicknameAvailable || !emailAvailable) return;
 
-            const submitBtn = document.getElementById('signUpSubmitBtn') || signUpForm.querySelector('.btn-signin');
-            submitBtn.textContent = 'Sending Code...';
-            submitBtn.disabled = true;
+            /** After consent modal: POST /api/register with privacy timestamp (stored on verify). */
+            function sendRegisterRequest() {
+                const privacyAgreedAt = new Date().toISOString();
+                const submitBtn = document.getElementById('signUpSubmitBtn') || signUpForm.querySelector('.btn-signin');
+                submitBtn.textContent = 'Sending Code...';
+                submitBtn.disabled = true;
 
-            fetch('/api/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nickname,
-                    email,
-                    password,
-                    firstName,
-                    lastName,
-                    gender,
-                    birthday
+                fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        nickname,
+                        email,
+                        password,
+                        firstName,
+                        lastName,
+                        gender,
+                        birthday,
+                        privacyAgreedAt
+                    })
                 })
-            })
-                .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-                .then(({ ok, data }) => {
-                    if (!ok || !data.success) {
-                        if (data.field) {
-                            const el = document.getElementById(data.field);
-                            if (el) showError(el, data.error || 'Invalid value');
-                            else showNotification(data.error || 'Registration failed', 'error');
-                        } else {
-                            showNotification(data.error || 'Registration failed', 'error');
+                    .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+                    .then(({ ok, data }) => {
+                        if (!ok || !data.success) {
+                            if (data.field) {
+                                const el = document.getElementById(data.field);
+                                if (el) showError(el, data.error || 'Invalid value');
+                                else showNotification(data.error || 'Registration failed', 'error');
+                            } else {
+                                showNotification(data.error || 'Registration failed', 'error');
+                            }
+                            submitBtn.textContent = 'SIGN UP';
+                            submitBtn.disabled = false;
+                            return;
                         }
+                        const pendingEmail = data.email || email;
+                        sessionStorage.setItem('pendingRegistrationEmail', pendingEmail);
+                        showNotification(data.message || 'Verification code sent to your email.', 'success');
                         submitBtn.textContent = 'SIGN UP';
                         submitBtn.disabled = false;
-                        return;
-                    }
-                    const pendingEmail = data.email || email;
-                    sessionStorage.setItem('pendingRegistrationEmail', pendingEmail);
-                    showNotification(data.message || 'Verification code sent to your email.', 'success');
-                    submitBtn.textContent = 'SIGN UP';
-                    submitBtn.disabled = false;
-                    setTimeout(() => {
-                        window.location.href = `verify-registration.html?email=${encodeURIComponent(pendingEmail)}`;
-                    }, 450);
-                })
-                .catch(() => {
-                    showNotification('Could not reach the server. Run the DiariCore app (Flask) or check your connection.', 'error');
-                    submitBtn.textContent = 'SIGN UP';
-                    submitBtn.disabled = false;
-                })
-                .finally(() => {
-                    if (signUpPwLiveInst) signUpPwLiveInst.refresh();
-                });
+                        setTimeout(() => {
+                            window.location.href = `verify-registration.html?email=${encodeURIComponent(pendingEmail)}`;
+                        }, 450);
+                    })
+                    .catch(() => {
+                        showNotification('Could not reach the server. Run the DiariCore app (Flask) or check your connection.', 'error');
+                        submitBtn.textContent = 'SIGN UP';
+                        submitBtn.disabled = false;
+                    })
+                    .finally(() => {
+                        if (signUpPwLiveInst) signUpPwLiveInst.refresh();
+                    });
+            }
+
+            if (!(privacyModal && privacyCheckbox && privacyAgreeBtn && privacyCancelBtn && privacyCloseBtn)) {
+                showNotification('Sign-up could not continue. Refresh the page and try again.', 'error');
+                return;
+            }
+            openPrivacyModal(sendRegisterRequest);
         });
     }
 });

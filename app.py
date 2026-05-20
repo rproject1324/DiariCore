@@ -669,6 +669,25 @@ def health():
     return jsonify({"ok": True, "database": "postgres" if db.USE_POSTGRES else "sqlite"})
 
 
+def _validated_registration_privacy_agreed_at(raw):
+    """Client sends ISO8601 timestamp when user accepts the signup privacy modal."""
+    if not isinstance(raw, str):
+        return None, "You must confirm the Privacy Notice before creating an account."
+    s = raw.strip()
+    if not s:
+        return None, "You must confirm the Privacy Notice before creating an account."
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None, "Invalid privacy consent. Please try again."
+    now = datetime.now(timezone.utc)
+    if dt > now + timedelta(minutes=15):
+        return None, "Invalid privacy consent. Please try again."
+    return dt, None
+
+
 @app.route("/api/register", methods=["POST"])
 def api_register():
     rl = authsec.rate_limit_check(request, "register", _RATE_REGISTER[0], _RATE_REGISTER[1])
@@ -707,6 +726,10 @@ def api_register():
     if not ok_pw:
         return jsonify({"success": False, "field": field_pw or "signUpPassword", "error": msg_pw}), 400
 
+    privacy_dt, privacy_err = _validated_registration_privacy_agreed_at(data.get("privacyAgreedAt"))
+    if privacy_err:
+        return jsonify({"success": False, "error": privacy_err}), 400
+
     otp_code = _generate_otp()
     otp_expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
@@ -720,6 +743,7 @@ def api_register():
         birthday=birthday,
         otp_code=otp_code,
         otp_expires_at=otp_expires_at,
+        privacy_agreed_at=privacy_dt,
     ):
         return jsonify({"success": False, "error": "Could not start verification. Please try again."}), 500
 

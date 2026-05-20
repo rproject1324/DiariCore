@@ -137,6 +137,76 @@
         </div>
     </div>
 
+    <div id="privacyConsentModal" class="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacyConsentModalTitle" aria-hidden="true">
+        <div class="privacy-modal__panel" tabindex="-1">
+            <header class="privacy-modal__header">
+                <div class="privacy-modal__heading-row">
+                    <i class="bi bi-shield-lock-fill privacy-modal__shield" aria-hidden="true"></i>
+                    <h2 id="privacyConsentModalTitle" class="privacy-modal__title">Privacy Notice &amp; Consent</h2>
+                    <button type="button" class="privacy-modal__close" id="privacyConsentCloseBtn" aria-label="Close">
+                        <i class="bi bi-x-lg" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </header>
+            <div class="privacy-modal__body" id="privacyConsentScrollArea">
+                <p class="privacy-modal__intro">Before we create your account, please review the following notices and scroll through every section.</p>
+                <p class="privacy-modal__scroll-hint">Scroll to read all sections</p>
+                <div class="privacy-modal__sections">
+                    <section class="privacy-section" aria-labelledby="privacySec1Title">
+                        <div class="privacy-section__heading">
+                            <span class="privacy-section__badge" aria-hidden="true">1</span>
+                            <h3 id="privacySec1Title" class="privacy-section__title">Data Privacy Act of 2012 (RA 10173)</h3>
+                            <span class="privacy-section__tag privacy-section__tag--required">Required</span>
+                        </div>
+                        <p class="privacy-section__body">You consent to the collection, processing, and storage of your personal data in accordance with Republic Act No. 10173 — Data Privacy Act of 2012 of the Philippines. Your data will only be used to provide and improve DiariCore's journaling services. You have the right to access, correct, and request deletion of your personal data at any time through your Profile settings. Your data will not be sold, shared, or disclosed to third parties without your explicit consent.</p>
+                    </section>
+                    <section class="privacy-section" aria-labelledby="privacySec2Title">
+                        <div class="privacy-section__heading">
+                            <span class="privacy-section__badge" aria-hidden="true">2</span>
+                            <h3 id="privacySec2Title" class="privacy-section__title">Sensitive Personal Information</h3>
+                            <span class="privacy-section__tag privacy-section__tag--required">Required</span>
+                        </div>
+                        <p class="privacy-section__body">DiariCore collects and processes Sensitive Personal Information as defined under RA 10173. This includes your journal entries, emotional states, mood patterns, and psychological data generated through our AI mood analysis feature. This data is treated with the highest level of security and confidentiality. It is stored encrypted, accessible only to you, and is never used for advertising or shared with any third party.</p>
+                    </section>
+                    <section class="privacy-section" aria-labelledby="privacySec3Title">
+                        <div class="privacy-section__heading">
+                            <span class="privacy-section__badge" aria-hidden="true">3</span>
+                            <h3 id="privacySec3Title" class="privacy-section__title">Mental Health Disclaimer</h3>
+                            <span class="privacy-section__tag privacy-section__tag--important">Important</span>
+                        </div>
+                        <p class="privacy-section__body">DiariCore is a personal journaling and self-reflection tool only. It is not a mental health application and does not provide medical, psychological, or psychiatric advice, diagnosis, or treatment. Mood analysis results are generated for personal reflection purposes only and should not be interpreted as a clinical assessment. Always consult a licensed mental health professional if you are experiencing emotional distress or mental health concerns.</p>
+                    </section>
+                    <section class="privacy-section" aria-labelledby="privacySec4Title">
+                        <div class="privacy-section__heading">
+                            <span class="privacy-section__badge" aria-hidden="true">4</span>
+                            <h3 id="privacySec4Title" class="privacy-section__title">AI &amp; Machine Learning Processing</h3>
+                            <span class="privacy-section__tag privacy-section__tag--important">Important</span>
+                        </div>
+                        <p class="privacy-section__body">Your journal entries are processed by an AI/ML model to detect and analyze emotional patterns. By using DiariCore, you consent to this processing. Please note that AI analysis is not always accurate — the model may misinterpret emotions or produce incorrect results. Analysis outputs are approximations only and should be treated as such. The model is continuously being improved but is not a substitute for human judgment.</p>
+                    </section>
+                    <section class="privacy-section" aria-labelledby="privacySec5Title">
+                        <div class="privacy-section__heading">
+                            <span class="privacy-section__badge" aria-hidden="true">5</span>
+                            <h3 id="privacySec5Title" class="privacy-section__title">Photo &amp; Media Privacy</h3>
+                            <span class="privacy-section__tag privacy-section__tag--required">Required</span>
+                        </div>
+                        <p class="privacy-section__body">Photos and media you upload to your journal entries are stored securely and are only visible to you. Your photos are never used for AI training, advertising, or shared with any third party. You retain full ownership of all media you upload. You may delete any uploaded photo at any time and it will be permanently removed from our servers.</p>
+                    </section>
+                </div>
+            </div>
+            <footer class="privacy-modal__footer">
+                <label class="privacy-modal__check-label" for="privacyConsentCheckbox">
+                    <input type="checkbox" id="privacyConsentCheckbox" class="privacy-modal__checkbox" autocomplete="off">
+                    <span>I have read all sections above and agree to these notices.</span>
+                </label>
+                <div class="privacy-modal__actions">
+                    <button type="button" class="privacy-modal__btn privacy-modal__btn--secondary" id="privacyConsentCancelBtn">Cancel</button>
+                    <button type="button" class="privacy-modal__btn privacy-modal__btn--primary" id="privacyConsentAgreeBtn" disabled>I Agree — Create Account</button>
+                </div>
+            </footer>
+        </div>
+    </div>
+
     <script src="diari-security.js"></script>    <script src="diari-offline.js"></script>
     <script src="diari-shell.js"></script>
     <script src="password-policy.js"></script>
