@@ -409,13 +409,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         window.DiariOffline.registerPageRefreshHandler(refreshInsightsFromSyncedStorage);
     }
     refreshInsightsFromSyncedStorage();
+
+    initializeInsightsHeroTabs();
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
     }
-
-    void loadEmotionTriggersDashboard();
-
-    initializeInsightsHeroTabs();
 
     window.addEventListener('diari-palette-changed', function () {
         initializeWeeklyMoodChart();

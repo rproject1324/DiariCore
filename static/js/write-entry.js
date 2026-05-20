@@ -2,9 +2,6 @@
 
 document.addEventListener('DOMContentLoaded', async function () {
     try {
-    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
-        window.DiariShell.release();
-    }
     setTimeout(() => {
         void (async () => {
             try {
@@ -1325,6 +1322,9 @@ document.addEventListener('DOMContentLoaded', async function () {
     // Initialize tags (defaults + user tags) then apply visibility rules.
     // Must complete before shell release or static HTML tags flash until fetch returns.
     await syncUserTagsIntoUI();
+    if (window.DiariShell && typeof window.DiariShell.release === 'function') {
+        window.DiariShell.release();
+    }
     
     // Update on window resize
     window.addEventListener('resize', updateTagVisibility);
