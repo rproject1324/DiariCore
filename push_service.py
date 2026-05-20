@@ -1306,7 +1306,7 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             streak = _compute_streak(entries)
             if prefs["streakEnabled"] and prefs["dailyEnabled"] and streak > 0:
                 if (
-                    h == 23
+                    h == 21
                     and m == 0
                     and state.get("lastStreak1hrDateKey") != today_key
                 ):
@@ -1320,7 +1320,7 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                         state_dirty = True
                 if (
                     h == 23
-                    and m == 30
+                    and m == 0
                     and state.get("lastStreak30minDateKey") != today_key
                 ):
                     if _push_all(

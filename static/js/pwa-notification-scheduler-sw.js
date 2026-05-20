@@ -11,9 +11,9 @@ const CHECK_TAG_INSIGHT = 'diari-pwa-insight-followup';
 const CHECK_TAG_STREAK_1HR = 'diari-pwa-streak-1hr';
 const CHECK_TAG_STREAK_30MIN = 'diari-pwa-streak-30min';
 
-/** Asia/Manila — one hour and thirty minutes before local midnight. */
-const STREAK_1HR_BEFORE_MIDNIGHT = { h: 23, m: 0 };
-const STREAK_30MIN_BEFORE_MIDNIGHT = { h: 23, m: 30 };
+/** Asia/Manila — PWA streak reminders at 9:00 PM and 11:00 PM. */
+const STREAK_REMINDER_FIRST = { h: 21, m: 0 };
+const STREAK_REMINDER_SECOND = { h: 23, m: 0 };
 
 function manilaDateKey(d) {
     return new Intl.DateTimeFormat('en-CA', {
@@ -201,7 +201,7 @@ async function runNotificationChecks() {
         const streak = computeStreakCount(entries);
         if (streak > 0 && typeof tpl.buildStreakReminderBody === 'function') {
             if (
-                isSameMinute(h, m, STREAK_1HR_BEFORE_MIDNIGHT.h, STREAK_1HR_BEFORE_MIDNIGHT.m) &&
+                isSameMinute(h, m, STREAK_REMINDER_FIRST.h, STREAK_REMINDER_FIRST.m) &&
                 prefs.lastStreak1hrDateKey !== todayKey
             ) {
                 const body1 = tpl.buildStreakReminderBody('1hr', streak);
@@ -218,7 +218,7 @@ async function runNotificationChecks() {
                 }
             }
             if (
-                isSameMinute(h, m, STREAK_30MIN_BEFORE_MIDNIGHT.h, STREAK_30MIN_BEFORE_MIDNIGHT.m) &&
+                isSameMinute(h, m, STREAK_REMINDER_SECOND.h, STREAK_REMINDER_SECOND.m) &&
                 prefs.lastStreak30minDateKey !== todayKey
             ) {
                 const body2 = tpl.buildStreakReminderBody('30min', streak);

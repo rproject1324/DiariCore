@@ -28,7 +28,7 @@ Use [cron-job.org](https://cron-job.org) or Railway cron if available.
 
 1. User installs PWA and allows notifications.
 2. App calls `POST /api/push/subscribe` with the browser subscription.
-3. Cron runs `dispatch_due_notifications()` — sends daily, streak (11:00 / 11:30 PM Manila), and insight reminders.
+3. Cron runs `dispatch_due_notifications()` — sends daily, streak (9:00 / 11:00 PM Manila), and insight reminders.
 
 ## Templates
 
