@@ -323,6 +323,15 @@
             pwaShowEdited: false,
         };
         writeEntriesCache(list, userId);
+        if (key.startsWith('offline_')) {
+            void updatePendingCreateForLocalEntryId(key, {
+                title: list[idx].title,
+                text: list[idx].text,
+                tags: list[idx].tags,
+                imageUrls: list[idx].imageUrls,
+                entryDateTimeLocal: list[idx].date || list[idx].createdAt,
+            });
+        }
         return list[idx];
     }
 
@@ -337,6 +346,81 @@
         const key = String(entryKey ?? '');
         const q = readEditQueue().filter((row) => String(row?.entryId ?? '') !== key);
         writeEditQueue(q);
+    }
+
+    function getDeleteQueueKeySet() {
+        const keys = new Set();
+        readDeleteQueue().forEach((row) => {
+            const k = String(row?.entryKey ?? '');
+            if (k) keys.add(k);
+        });
+        return keys;
+    }
+
+    function filterServerEntriesRespectingDeletes(serverEntries) {
+        const tombstones = getDeleteQueueKeySet();
+        if (!tombstones.size) return serverEntries;
+        return (serverEntries || []).filter((s) => !tombstones.has(String(s?.id ?? '')));
+    }
+
+    function imageUrlsToPendingImages(urls) {
+        return (urls || [])
+            .map((u) => {
+                const s = String(u || '');
+                if (!s) return null;
+                if (s.startsWith('data:')) return { url: '', dataUrl: s };
+                return { url: s, dataUrl: '' };
+            })
+            .filter(Boolean);
+    }
+
+    async function updatePendingCreateForLocalEntryId(localEntryId, patch) {
+        if (!isPwaUiContext()) return;
+        const key = String(localEntryId ?? '');
+        if (!key.startsWith('offline_')) return;
+
+        const images = patch?.imageUrls
+            ? imageUrlsToPendingImages(patch.imageUrls)
+            : patch?.images;
+
+        const ls = readOfflineCreateQueueLs();
+        let lsChanged = false;
+        const nextLs = ls.map((r) => {
+            if (String(r?.localEntryId || '') !== key) return r;
+            lsChanged = true;
+            return {
+                ...r,
+                title: patch?.title !== undefined ? patch.title : r.title,
+                text: patch?.text !== undefined ? patch.text : r.text,
+                tags: patch?.tags !== undefined ? patch.tags : r.tags,
+                entryDateTimeLocal:
+                    patch?.entryDateTimeLocal !== undefined
+                        ? patch.entryDateTimeLocal
+                        : r.entryDateTimeLocal,
+                images: images !== undefined ? images : r.images,
+            };
+        });
+        if (lsChanged) writeOfflineCreateQueueLs(nextLs);
+
+        try {
+            const pending = await pendingEntriesGetAll();
+            for (const row of pending) {
+                if (String(row?.localEntryId || '') !== key) continue;
+                await queuePendingEntry({
+                    ...row,
+                    title: patch?.title !== undefined ? patch.title : row.title,
+                    text: patch?.text !== undefined ? patch.text : row.text,
+                    tags: patch?.tags !== undefined ? patch.tags : row.tags,
+                    entryDateTimeLocal:
+                        patch?.entryDateTimeLocal !== undefined
+                            ? patch.entryDateTimeLocal
+                            : row.entryDateTimeLocal,
+                    images: images !== undefined ? images : row.images,
+                });
+            }
+        } catch (e) {
+            console.warn('[DiariOffline] updatePendingCreateForLocalEntryId failed:', e);
+        }
     }
 
     function coalesceEditQueueLatest() {
@@ -419,7 +503,7 @@
     }
 
     async function flushPendingEntryDeletes() {
-        if (!isPwaUiContext()) return;
+        if (!isPwaUiContext() || !isOnline()) return;
         const userId = getUserId();
         if (!userId) return;
 
@@ -676,7 +760,9 @@
 
     /** Keep unsynced PWA offline drafts when refreshing from the server. */
     function mergeServerEntriesWithLocal(serverEntries, userId) {
-        const server = Array.isArray(serverEntries) ? serverEntries : [];
+        const server = filterServerEntriesRespectingDeletes(
+            Array.isArray(serverEntries) ? serverEntries : []
+        );
         if (!isPwaUiContext()) {
             writeEntriesCache(server, userId);
             return server;
@@ -717,8 +803,10 @@
             return s;
         });
         const serverIds = new Set(server.map((e) => String(e?.id ?? '')));
+        const deleteKeys = getDeleteQueueKeySet();
         const kept = pending.filter((e) => {
             const id = String(e?.id ?? '');
+            if (deleteKeys.has(id)) return false;
             return !serverIds.has(id);
         });
         const merged = [...mergedServer, ...kept];
@@ -736,7 +824,9 @@
      */
     function applyServerEntriesOnRefresh(serverEntries, userId) {
         sanitizeEntriesCachePwaFlags();
-        const server = Array.isArray(serverEntries) ? serverEntries : [];
+        const server = filterServerEntriesRespectingDeletes(
+            Array.isArray(serverEntries) ? serverEntries : []
+        );
         if (!isPwaUiContext()) {
             writeEntriesCache(server, userId, { forceNotify: true });
             return server;
@@ -775,10 +865,12 @@
             return s;
         });
 
+        const deleteKeys = getDeleteQueueKeySet();
         const extra = local.filter((e) => {
             if (!e) return false;
             const id = String(e?.id ?? '');
             if (serverIds.has(id)) return false;
+            if (deleteKeys.has(id)) return false;
             if (id.startsWith('offline_')) return true;
             return isOfflineLocalEntry(e);
         });
@@ -1184,6 +1276,7 @@
         return {
             queueRecord: {
                 id: `offline_entry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                localEntryId: localId,
                 userId,
                 title: title || '',
                 entryDateTimeLocal: entryDateTimeLocal || '',
@@ -1362,49 +1455,146 @@
         }
     }
 
+    async function resolvePendingCreateImages(item, userId, editRow) {
+        const imageUrls = [];
+        const sources = [];
+
+        if (Array.isArray(item?.images) && item.images.length) {
+            sources.push(...item.images);
+        }
+        if (editRow?.imageMediaKey) {
+            try {
+                const blobRow = await idbEditMediaGet(editRow.imageMediaKey);
+                if (blobRow?.images?.length) sources.push(...blobRow.images);
+            } catch (_) {
+                /* ignore */
+            }
+        }
+
+        for (const img of sources) {
+            if (img?.url) {
+                imageUrls.push(img.url);
+                continue;
+            }
+            if (img?.dataUrl) {
+                const blob = dataUrlToBlob(img.dataUrl);
+                const ext = (blob.type || 'image/png').split('/')[1] || 'png';
+                const file = new File([blob], `offline-${Date.now()}.${ext}`, {
+                    type: blob.type || 'image/png',
+                });
+                imageUrls.push(await uploadImageFile(file, userId));
+            }
+        }
+        return imageUrls;
+    }
+
+    /** Fold offline edits into the pending create row so only one POST runs on sync. */
+    async function mergePendingCreateRecordForFlush(item, userId) {
+        const localId = String(item?.localEntryId || '');
+        const cacheRow = localId
+            ? readEntriesCache().find((e) => String(e?.id ?? '') === localId)
+            : null;
+        const editRow = localId
+            ? coalesceEditQueueLatest().find((r) => String(r?.entryId ?? '') === localId)
+            : null;
+
+        let title = item.title || '';
+        let text = item.text || '';
+        let tags = item.tags || [];
+        let entryDateTimeLocal = item.entryDateTimeLocal || '';
+
+        if (cacheRow) {
+            title = cacheRow.title ?? title;
+            text = cacheRow.text ?? text;
+            tags = cacheRow.tags ?? tags;
+            entryDateTimeLocal =
+                cacheRow.date || cacheRow.createdAt || entryDateTimeLocal;
+        }
+        if (editRow) {
+            title = editRow.title ?? title;
+            text = editRow.text ?? text;
+            tags = editRow.tags ?? tags;
+        }
+
+        const imageUrls = await resolvePendingCreateImages(item, userId, editRow);
+        if (cacheRow?.imageUrls?.length) {
+            const fromCache = (cacheRow.imageUrls || []).filter(
+                (u) => u && !String(u).startsWith('data:')
+            );
+            if (fromCache.length && !imageUrls.length) {
+                imageUrls.push(...fromCache);
+            }
+        }
+
+        return { title, text, tags, entryDateTimeLocal, imageUrls, editRow };
+    }
+
     async function flushPendingEntryCreates() {
-        if (!isOnline()) return;
+        if (!isPwaUiContext() || !isOnline()) return;
         const userId = getUserId();
         if (!userId) return;
 
-        const pending = await pendingEntriesGetAll();
-        for (const item of pending) {
-            try {
-                const imageUrls = [];
-                for (const img of item.images || []) {
-                    if (img.url) {
-                        imageUrls.push(img.url);
-                        continue;
-                    }
-                    if (img.dataUrl) {
-                        const blob = dataUrlToBlob(img.dataUrl);
-                        const ext = (blob.type || 'image/png').split('/')[1] || 'png';
-                        const file = new File([blob], `offline-${Date.now()}.${ext}`, {
-                            type: blob.type || 'image/png',
-                        });
-                        imageUrls.push(await uploadImageFile(file, userId));
+        const pendingRaw = await pendingEntriesGetAll();
+        const byLocalId = new Map();
+        const withoutLocal = [];
+        for (const item of pendingRaw) {
+            const lid = String(item?.localEntryId || '');
+            if (lid) {
+                const prev = byLocalId.get(lid);
+                if (!prev) byLocalId.set(lid, item);
+                else {
+                    const ta = new Date(item.createdAt || 0).getTime();
+                    const tb = new Date(prev.createdAt || 0).getTime();
+                    const keep = ta >= tb ? item : prev;
+                    const drop = ta >= tb ? prev : item;
+                    byLocalId.set(lid, keep);
+                    try {
+                        await pendingEntryDelete(drop.id);
+                    } catch (_) {
+                        /* ignore */
                     }
                 }
+            } else {
+                withoutLocal.push(item);
+            }
+        }
+        const pending = [...byLocalId.values(), ...withoutLocal];
+
+        for (const item of pending) {
+            try {
+                const localId = String(item?.localEntryId || '');
+                if (localId && hasQueuedDeleteForEntry(localId)) {
+                    await pendingEntryDelete(item.id);
+                    removeOfflineEntryByLocalId(localId, userId);
+                    removeEditQueueForEntry(localId);
+                    continue;
+                }
+
+                const merged = await mergePendingCreateRecordForFlush(item, userId);
                 const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
                 const response = await fetchFn('/api/entries', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         userId,
-                        title: item.title || '',
-                        entryDateTimeLocal: item.entryDateTimeLocal || '',
-                        text: item.text || '',
-                        tags: item.tags || [],
-                        imageUrls,
+                        title: merged.title || '',
+                        entryDateTimeLocal: merged.entryDateTimeLocal || '',
+                        text: merged.text || '',
+                        tags: merged.tags || [],
+                        imageUrls: merged.imageUrls,
                     }),
                 });
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok || !result?.success || !result?.entry) {
                     throw new Error(result?.error || 'Offline sync entry save failed');
                 }
-                if (item.localEntryId) {
-                    remapEditQueueEntryId(item.localEntryId, result.entry.id);
-                    removeOfflineEntryByLocalId(item.localEntryId, userId);
+                if (localId) {
+                    removeEditQueueForEntry(localId);
+                    if (merged.editRow?.imageMediaKey) {
+                        await idbEditMediaDelete(merged.editRow.imageMediaKey);
+                    }
+                    remapEditQueueEntryId(localId, result.entry.id);
+                    removeOfflineEntryByLocalId(localId, userId);
                 }
                 mergeEntryIntoCache(
                     {
@@ -1639,7 +1829,7 @@
 
         const kick = () => {
             if (!isOnline()) return;
-            void pullRemoteStateForRefresh().then(() => {
+            void requestPwaSync({ trustNavigatorOnline: true }).then(() => {
                 if (refresh) refresh();
             });
         };
@@ -1652,9 +1842,16 @@
     }
 
     async function flushPendingEntryEdits() {
-        if (!isOnline()) return;
+        if (!isPwaUiContext() || !isOnline()) return;
         const userId = getUserId();
         if (!userId) return;
+
+        const pendingCreates = await pendingEntriesGetAll();
+        const pendingCreateIds = new Set(
+            pendingCreates
+                .map((p) => String(p?.localEntryId || ''))
+                .filter((id) => id.startsWith('offline_'))
+        );
 
         const q = coalesceEditQueueLatest();
         const next = [];
@@ -1663,7 +1860,17 @@
         for (const row of q) {
             const entryKey = String(row.entryId || '');
             if (entryKey.startsWith('offline_')) {
-                next.push(row);
+                if (pendingCreateIds.has(entryKey)) {
+                    continue;
+                }
+                removeOfflineEntryByLocalId(entryKey, userId);
+                if (row.imageMediaKey) {
+                    try {
+                        await idbEditMediaDelete(row.imageMediaKey);
+                    } catch (_) {
+                        /* ignore */
+                    }
+                }
                 continue;
             }
             const numericId = Number(entryKey);
