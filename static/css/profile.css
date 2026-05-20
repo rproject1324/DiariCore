@@ -4385,7 +4385,7 @@ html.theme-dark .pwa-offline-model-status__bar {
     }
 }
 
-/* PWA installed app — reminder chevron nudge + personal info offline (matches notification prefs) */
+/* PWA installed app — Personal Information offline (same pattern as Preferences notifications) */
 @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
     html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
     html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
@@ -4394,10 +4394,32 @@ html.theme-dark .pwa-offline-model-status__bar {
         opacity: 0.92;
     }
 
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__input,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-field__select,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-summary__change,
-    body.page-profile #profileSectionPersonalInfo.pwa-profile-personal-offline .profile-account-detail-btn {
+    body.page-profile .profile-account-detail-card.pwa-personal-info-offline {
+        position: relative;
+    }
+
+    body.page-profile .profile-account-detail-card.pwa-personal-info-offline::after {
+        content: 'Profile details need internet. You can edit these fields again when you are back online.';
+        display: block;
+        margin: 0.65rem 0 0;
+        padding: 0.65rem 0.85rem;
+        border-radius: 10px;
+        font-size: 0.82rem;
+        line-height: 1.45;
+        color: var(--text-secondary, #5c6b73);
+        background: var(--background-soft, #eef2f0);
+        border: 1px solid var(--border-color, #e0e6e3);
+    }
+
+    html.theme-dark body.page-profile .profile-account-detail-card.pwa-personal-info-offline::after {
+        color: var(--text-secondary, #9fb0b8);
+        background: var(--background-soft, #1a2429);
+        border-color: var(--border-color, #2f3b42);
+    }
+
+    body.page-profile .profile-account-detail-card.pwa-personal-info-offline .profile-account-detail-summary,
+    body.page-profile .profile-account-detail-card.pwa-personal-info-offline .profile-account-detail-form,
+    body.page-profile .profile-account-detail-card.pwa-personal-info-offline .profile-account-detail-footer {
         opacity: 0.5;
         pointer-events: none;
     }

@@ -51,9 +51,14 @@
 
         const offline = isProfilePersonalOffline();
         const panel = global.document.getElementById('profileSectionPersonalInfo');
+        const card = panel && panel.querySelector('.profile-account-detail-card');
 
         if (panel) {
             panel.classList.toggle('pwa-profile-personal-offline', offline);
+        }
+        if (card) {
+            /* Same pattern as Preferences → Notifications (pwa-notifications-offline on the card). */
+            card.classList.toggle('pwa-personal-info-offline', offline);
         }
 
         FIELD_IDS.forEach(function (id) {
