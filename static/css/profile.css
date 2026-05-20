@@ -4387,11 +4387,37 @@ html.theme-dark .pwa-offline-model-status__bar {
 
 /* PWA installed app — Personal Information offline (same pattern as Preferences notifications) */
 @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+        flex: 0 0 auto;
+        width: auto;
+        max-width: fit-content;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-info {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
+        width: auto !important;
+        max-width: 8.75rem !important;
+        min-width: 6.75rem;
+        box-sizing: border-box;
+        padding-left: 0.55rem !important;
+        padding-right: 0.55rem !important;
+    }
+
     html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
     html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        transform: translateX(-10px);
+        transform: translateX(-14px);
         cursor: pointer;
         opacity: 0.92;
+    }
+
+    @media (max-width: 768px) {
+        body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+            align-self: flex-end;
+        }
     }
 
     body.page-profile .profile-account-detail-card.pwa-personal-info-offline {

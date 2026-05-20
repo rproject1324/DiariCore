@@ -145,12 +145,43 @@ html.theme-dark .pwa-install-banner__inner {
     }
 }
 
-/* PWA Profile — shift time picker chevron left only (do not widen the input box) */
+/* PWA Profile — Reminder time row: compact field + chevron nudge only (no extra input width) */
+html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control,
+html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: fit-content;
+}
+
+html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-info,
+html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-info {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
+html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
+    width: auto !important;
+    max-width: 8.75rem !important;
+    min-width: 6.75rem;
+    box-sizing: border-box;
+    padding-left: 0.55rem !important;
+    padding-right: 0.55rem !important;
+}
+
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
     cursor: pointer;
     opacity: 0.92;
-    transform: translateX(-10px);
+    transform: translateX(-14px);
+}
+
+/* PWA: stacked reminder row — keep time box compact on the right */
+@media (max-width: 768px) {
+    html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control,
+    html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+        align-self: flex-end;
+    }
 }
 
 /* PWA Profile — daily push needs internet; grey out when offline */
@@ -285,10 +316,36 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
         opacity: 0 !important;
     }
 
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+        flex: 0 0 auto;
+        width: auto;
+        max-width: fit-content;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-info {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
+        width: auto !important;
+        max-width: 8.75rem !important;
+        min-width: 6.75rem;
+        box-sizing: border-box;
+        padding-left: 0.55rem !important;
+        padding-right: 0.55rem !important;
+    }
+
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        transform: translateX(-10px);
+        transform: translateX(-14px);
         cursor: pointer;
         opacity: 0.92;
+    }
+
+    @media (max-width: 768px) {
+        body.page-profile .profile-preferences-stack .notifications-item--reminder-time .notifications-control {
+            align-self: flex-end;
+        }
     }
 
     body.page-profile .profile-account-detail-card.pwa-personal-info-offline {
