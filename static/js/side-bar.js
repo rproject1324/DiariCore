@@ -133,6 +133,7 @@ class SidebarComponent {
         this.overlay = null;
         this.syncBadgeEl = null;
         this.syncBadgePoller = null;
+        this.prefetchedRoutes = new Set();
         this.init();
     }
 
@@ -463,6 +464,7 @@ class SidebarComponent {
                 link.addEventListener('click', (e) => this.handleNavClick(e));
             });
         }
+        this.setupNavPrefetch();
 
         // Handle window resize
         window.addEventListener('resize', () => this.handleResize());
@@ -477,6 +479,62 @@ class SidebarComponent {
         window.addEventListener('storage', () => this.refreshSyncStatusBadge());
         window.addEventListener('diari-offline-sync', () => this.refreshSyncStatusBadge());
         window.addEventListener('diari-offline-sync-complete', () => this.refreshSyncStatusBadge());
+    }
+
+    canPrefetchNav() {
+        if (navigator.onLine === false) return false;
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        if (!conn) return true;
+        if (conn.saveData) return false;
+        const type = String(conn.effectiveType || '').toLowerCase();
+        if (type === 'slow-2g' || type === '2g') return false;
+        return true;
+    }
+
+    resolvePrefetchHref(rawHref) {
+        const href = String(rawHref || '').trim();
+        if (!href || href === '#' || href.startsWith('http') || href.startsWith('mailto:')) return '';
+        if (!/\.html(?:$|[?#])/.test(href)) return '';
+        try {
+            const u = new URL(href, window.location.href);
+            if (u.origin !== window.location.origin) return '';
+            if (u.pathname === window.location.pathname && u.search === window.location.search) return '';
+            return u.pathname + u.search;
+        } catch (_) {
+            return '';
+        }
+    }
+
+    prefetchNavTarget(rawHref) {
+        if (!this.canPrefetchNav()) return;
+        const target = this.resolvePrefetchHref(rawHref);
+        if (!target || this.prefetchedRoutes.has(target)) return;
+        this.prefetchedRoutes.add(target);
+        try {
+            const link = document.createElement('link');
+            link.rel = 'prefetch';
+            link.as = 'document';
+            link.href = target;
+            document.head.appendChild(link);
+            fetch(target, { credentials: 'same-origin' }).catch(() => undefined);
+        } catch (_) {
+            /* ignore prefetch failures */
+        }
+    }
+
+    setupNavPrefetch() {
+        if (this.navPrefetchBound) return;
+        this.navPrefetchBound = true;
+        const wireLink = (link) => {
+            if (!link || link.dataset.navPrefetchBound === '1') return;
+            link.dataset.navPrefetchBound = '1';
+            const run = () => this.prefetchNavTarget(link.getAttribute('href'));
+            link.addEventListener('pointerenter', run, { passive: true });
+            link.addEventListener('focus', run, { passive: true });
+            link.addEventListener('touchstart', run, { passive: true });
+        };
+
+        document.querySelectorAll('.nav-link, .mobile-bottom-nav-link').forEach(wireLink);
     }
 
     initSyncStatusBadge() {
