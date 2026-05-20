@@ -514,7 +514,18 @@
         color: #ffffff !important;
         text-decoration: none !important;
         box-shadow: 0 2px 8px rgba(111, 143, 127, 0.35) !important;
-        transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease !important;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease, opacity 0.16s ease !important;
+    }
+
+    /* Avoid brief empty/fallback avatar flash on mobile/PWA pages by only revealing after hydration. */
+    body.has-mobile-app-topbar .mobile-app-topbar__profile:not(.mobile-app-topbar__profile--hydrated) {
+        opacity: 0 !important;
+        visibility: hidden !important;
+    }
+
+    body.has-mobile-app-topbar .mobile-app-topbar__profile.mobile-app-topbar__profile--hydrated {
+        opacity: 1 !important;
+        visibility: visible !important;
     }
     
     .mobile-app-topbar__profile:hover,
