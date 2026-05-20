@@ -336,6 +336,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!privacyModal || !privacyModal.classList.contains('is-open')) return;
         privacyModalSubmitFn = null;
         privacyModal.classList.remove('is-open');
+        privacyModal.setAttribute('hidden', '');
         privacyModal.setAttribute('aria-hidden', 'true');
         document.documentElement.classList.remove('privacy-modal-open');
         document.body.classList.remove('privacy-modal-open');
@@ -368,6 +369,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 } catch (_) {}
             }
         }, 0);
+    }
+
+    if (privacyModal) {
+        privacyModal.classList.remove('is-open');
+        privacyModal.setAttribute('hidden', '');
+        privacyModal.setAttribute('aria-hidden', 'true');
+        document.documentElement.classList.remove('privacy-modal-open');
+        document.body.classList.remove('privacy-modal-open');
     }
 
     if (privacyModal && privacyCheckbox && privacyAgreeBtn && privacyCancelBtn && privacyCloseBtn) {
