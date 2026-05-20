@@ -20,13 +20,19 @@ MS_PER_DAY = 86400000
 BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES: dict | None = None
 # Bump when push send path changes (visible in /api/push/vapid-public-key).
-PUSH_BACKEND_VERSION = "2026-05-19-schedule-v24"
+PUSH_BACKEND_VERSION = "2026-05-20-pwa-ack-retry-v25"
 DAILY_PUSH_RETRY_MIN_SECONDS = max(
     120, int(os.environ.get("DAILY_PUSH_RETRY_MIN_SECONDS", "300"))
 )
 DAILY_PUSH_MAX_ATTEMPTS = max(1, int(os.environ.get("DAILY_PUSH_MAX_ATTEMPTS", "3")))
 DISPATCH_WINDOW_MINUTES = max(
     1, int(os.environ.get("PUSH_DISPATCH_WINDOW_MINUTES", "30"))
+)
+PWA_PUSH_ACK_RETRY_MIN_SECONDS = max(
+    120, int(os.environ.get("PWA_PUSH_ACK_RETRY_MIN_SECONDS", "300"))
+)
+PWA_PUSH_ACK_MAX_ATTEMPTS = max(
+    1, int(os.environ.get("PWA_PUSH_ACK_MAX_ATTEMPTS", "3"))
 )
 # Do not delete a subscription FCM rejects right after register (token may need a moment).
 PUSH_SUBSCRIPTION_GRACE_SECONDS = max(
@@ -533,6 +539,157 @@ def _seconds_since_iso(ts: str | None) -> float | None:
         return None
 
 
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_utc(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        s = str(ts).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _push_ack_key(tag: str, title: str) -> str:
+    return f"{str(tag or '').strip()}|{str(title or '').strip().lower()}"
+
+
+def _pending_push_checks(state: dict) -> dict:
+    raw = state.get("pendingPushChecks")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _set_pending_push_check(
+    state: dict,
+    key: str,
+    *,
+    tag: str,
+    title: str,
+    body: str,
+    url: str,
+    attempts: int,
+    expires_at: str,
+) -> None:
+    checks = dict(_pending_push_checks(state))
+    checks[key] = {
+        "tag": str(tag or ""),
+        "title": str(title or ""),
+        "body": str(body or ""),
+        "url": str(url or "/write-entry.html"),
+        "at": _iso_utc_now(),
+        "attempts": max(1, int(attempts)),
+        "expiresAt": str(expires_at or ""),
+    }
+    state["pendingPushChecks"] = checks
+
+
+def _remove_pending_push_check(state: dict, key: str) -> None:
+    checks = dict(_pending_push_checks(state))
+    if key in checks:
+        checks.pop(key, None)
+        if checks:
+            state["pendingPushChecks"] = checks
+        else:
+            state.pop("pendingPushChecks", None)
+
+
+def _has_push_ack_for_pending(state: dict, pending: dict) -> bool:
+    if not isinstance(pending, dict):
+        return False
+    tag = str(pending.get("tag") or "")
+    title = str(pending.get("title") or "")
+    sent_dt = _parse_iso_utc(pending.get("at"))
+    sent_ts = sent_dt.timestamp() if sent_dt else 0.0
+
+    ledger = state.get("lastDeliveryAckByType")
+    if isinstance(ledger, dict):
+        ack_raw = ledger.get(_push_ack_key(tag, title))
+        ack_dt = _parse_iso_utc(str(ack_raw or ""))
+        if ack_dt and ack_dt.timestamp() >= sent_ts:
+            return True
+
+    last_ack = state.get("lastDeliveryAck")
+    if isinstance(last_ack, dict):
+        if str(last_ack.get("tag") or "") == tag and str(last_ack.get("title") or "") == title:
+            ack_dt = _parse_iso_utc(str(last_ack.get("at") or ""))
+            if ack_dt and ack_dt.timestamp() >= sent_ts:
+                return True
+    return False
+
+
+def _retry_pending_pwa_pushes(subs: list[dict], state: dict) -> tuple[bool, int, int]:
+    """
+    PWA-only reliability checker:
+    retry pending push notifications when the service worker did not ack display yet.
+    """
+    checks = _pending_push_checks(state)
+    if not checks:
+        return False, 0, 0
+    changed = False
+    sent = 0
+    failed = 0
+    now_utc = datetime.now(timezone.utc)
+    first_device = subs[:1]
+    for key, pending in list(checks.items()):
+        if not isinstance(pending, dict):
+            _remove_pending_push_check(state, key)
+            changed = True
+            continue
+        if _has_push_ack_for_pending(state, pending):
+            _remove_pending_push_check(state, key)
+            changed = True
+            continue
+        expires_at = _parse_iso_utc(str(pending.get("expiresAt") or ""))
+        if expires_at and now_utc >= expires_at:
+            _remove_pending_push_check(state, key)
+            changed = True
+            continue
+        attempts = int(pending.get("attempts") or 1)
+        if attempts >= PWA_PUSH_ACK_MAX_ATTEMPTS:
+            _remove_pending_push_check(state, key)
+            changed = True
+            continue
+        age = _seconds_since_iso(str(pending.get("at") or ""))
+        if age is not None and age < PWA_PUSH_ACK_RETRY_MIN_SECONDS:
+            continue
+        ok_any = False
+        for sub in first_device:
+            ok, _err = send_web_push(
+                sub,
+                str(pending.get("title") or "DiariCore"),
+                str(pending.get("body") or ""),
+                str(pending.get("url") or "/write-entry.html"),
+                tag=str(pending.get("tag") or "diari-web-push"),
+            )
+            if ok:
+                ok_any = True
+                sent += 1
+            else:
+                failed += 1
+        if ok_any:
+            _set_pending_push_check(
+                state,
+                key,
+                tag=str(pending.get("tag") or ""),
+                title=str(pending.get("title") or ""),
+                body=str(pending.get("body") or ""),
+                url=str(pending.get("url") or "/write-entry.html"),
+                attempts=attempts + 1,
+                expires_at=str(pending.get("expiresAt") or ""),
+            )
+            changed = True
+        elif attempts + 1 >= PWA_PUSH_ACK_MAX_ATTEMPTS:
+            _remove_pending_push_check(state, key)
+            changed = True
+    return changed, sent, failed
+
+
 def _ack_confirms_daily_reminder(
     state: dict, today_key: str, reminder: tuple[int, int]
 ) -> bool:
@@ -619,6 +776,14 @@ def record_delivery_ack(user_id: int, data: dict) -> None:
         "tag": tag,
         "title": str(data.get("title") or ""),
     }
+    ack_by_type = (
+        dict(state.get("lastDeliveryAckByType"))
+        if isinstance(state.get("lastDeliveryAckByType"), dict)
+        else {}
+    )
+    ack_key = _push_ack_key(tag, state["lastDeliveryAck"]["title"])
+    ack_by_type[ack_key] = state["lastDeliveryAck"]["at"]
+    state["lastDeliveryAckByType"] = ack_by_type
     if tag == "diari-daily-reminder":
         today_key = _manila_date_key(_manila_now())
         rem = None
@@ -684,6 +849,7 @@ def clear_daily_reminder_state(user_id: int) -> None:
         "lastDailyReminderDateKey",
         "lastDailyReminderHhmm",
         "pendingDailyReminder",
+        "pendingPushChecks",
     ):
         state.pop(key, None)
     ack = state.get("lastDeliveryAck")
@@ -1204,6 +1370,14 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
             ),
             "devices": len(subs),
         }
+        retry_dirty, retry_sent, retry_failed = _retry_pending_pwa_pushes(subs, state)
+        if retry_dirty:
+            state_dirty = True
+        if retry_sent or retry_failed:
+            sent += retry_sent
+            errors += retry_failed
+            dbg["retryPushOk"] = retry_sent
+            dbg["retryPushFail"] = retry_failed
 
         def _push_all(
             title: str, body: str, url: str, *, tag: str = "diari-web-push"
@@ -1310,26 +1484,60 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
                     and m == 0
                     and state.get("lastStreak1hrDateKey") != today_key
                 ):
-                    if _push_all(
+                    streak_first_body = _build_streak_body("1hr", streak)
+                    ok_any, _ok_n, _fail_n = _push_all(
                         "Your streak tonight",
-                        _build_streak_body("1hr", streak),
+                        streak_first_body,
                         "/write-entry.html",
                         tag="diari-streak-reminder",
-                    )[0]:
+                    )
+                    if ok_any:
                         state["lastStreak1hrDateKey"] = today_key
+                        expires = datetime.now(NOTIFY_TZ).replace(
+                            hour=23, minute=50, second=0, microsecond=0
+                        )
+                        if expires <= datetime.now(NOTIFY_TZ):
+                            expires = datetime.now(NOTIFY_TZ) + timedelta(minutes=50)
+                        _set_pending_push_check(
+                            state,
+                            f"streak-first:{today_key}",
+                            tag="diari-streak-reminder",
+                            title="Your streak tonight",
+                            body=streak_first_body,
+                            url="/write-entry.html",
+                            attempts=1,
+                            expires_at=expires.astimezone(timezone.utc).isoformat(),
+                        )
                         state_dirty = True
                 if (
                     h == 23
                     and m == 0
                     and state.get("lastStreak30minDateKey") != today_key
                 ):
-                    if _push_all(
+                    streak_second_body = _build_streak_body("30min", streak)
+                    ok_any, _ok_n, _fail_n = _push_all(
                         "Before the day ends",
-                        _build_streak_body("30min", streak),
+                        streak_second_body,
                         "/write-entry.html",
                         tag="diari-streak-reminder",
-                    )[0]:
+                    )
+                    if ok_any:
                         state["lastStreak30minDateKey"] = today_key
+                        expires = datetime.now(NOTIFY_TZ).replace(
+                            hour=23, minute=59, second=0, microsecond=0
+                        )
+                        if expires <= datetime.now(NOTIFY_TZ):
+                            expires = datetime.now(NOTIFY_TZ) + timedelta(minutes=45)
+                        _set_pending_push_check(
+                            state,
+                            f"streak-second:{today_key}",
+                            tag="diari-streak-reminder",
+                            title="Before the day ends",
+                            body=streak_second_body,
+                            url="/write-entry.html",
+                            attempts=1,
+                            expires_at=expires.astimezone(timezone.utc).isoformat(),
+                        )
                         state_dirty = True
         else:
             skipped_entry_today += 1
@@ -1338,14 +1546,27 @@ def dispatch_due_notifications(debug: bool = False) -> dict:
         if prefs["insightEnabled"] and entries:
             last = entries[0]
             if _should_fire_insight(state, last, today_key):
+                insight_title = "Following up on your journal"
+                insight_body = _build_insight_body(last)
                 if _push_all(
                     "Following up on your journal",
-                    _build_insight_body(last),
+                    insight_body,
                     "/entries.html",
                     tag="diari-insight-followup",
                 )[0]:
                     state["lastInsightEntryId"] = str(last.get("id"))
                     state["lastInsightDateKey"] = today_key
+                    expires = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+                    _set_pending_push_check(
+                        state,
+                        f"insight:{state['lastInsightEntryId']}:{today_key}",
+                        tag="diari-insight-followup",
+                        title=insight_title,
+                        body=insight_body,
+                        url="/entries.html",
+                        attempts=1,
+                        expires_at=expires,
+                    )
                     state_dirty = True
 
         if state_dirty:
