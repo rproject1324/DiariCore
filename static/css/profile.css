@@ -4400,18 +4400,22 @@ html.theme-dark .pwa-offline-model-status__bar {
 
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
         width: auto !important;
-        max-width: 8.75rem !important;
-        min-width: 6.75rem;
+        max-width: 6.85rem !important;
+        min-width: 5.5rem;
         box-sizing: border-box;
-        padding-left: 0.55rem !important;
-        padding-right: 0.55rem !important;
+        padding-left: 0.45rem !important;
+        padding-right: 0.4rem !important;
     }
 
     html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
     html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        transform: translateX(-14px);
         cursor: pointer;
         opacity: 0.92;
+        margin-inline-end: 0.55rem;
+        margin-left: 0;
+        position: relative;
+        right: 6px;
+        transform: translateX(-10px);
     }
 
     @media (max-width: 768px) {

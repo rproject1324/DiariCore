@@ -162,18 +162,23 @@ html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
     width: auto !important;
-    max-width: 8.75rem !important;
-    min-width: 6.75rem;
+    max-width: 6.85rem !important;
+    min-width: 5.5rem;
     box-sizing: border-box;
-    padding-left: 0.55rem !important;
-    padding-right: 0.55rem !important;
+    padding-left: 0.45rem !important;
+    padding-right: 0.4rem !important;
 }
 
+/* Chevron: margin insets from edge on Android Chrome; translateX backs it toward AM (PWA-only above). */
 html.diari-pwa-standalone body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator,
 html[data-diari-pwa='standalone'] body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
     cursor: pointer;
     opacity: 0.92;
-    transform: translateX(-14px);
+    margin-inline-end: 0.55rem;
+    margin-left: 0;
+    position: relative;
+    right: 6px;
+    transform: translateX(-10px);
 }
 
 /* PWA: stacked reminder row — keep time box compact on the right */
@@ -329,17 +334,21 @@ html.theme-dark[data-diari-pwa='standalone'] body.page-profile .profile-notifica
 
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input {
         width: auto !important;
-        max-width: 8.75rem !important;
-        min-width: 6.75rem;
+        max-width: 6.85rem !important;
+        min-width: 5.5rem;
         box-sizing: border-box;
-        padding-left: 0.55rem !important;
-        padding-right: 0.55rem !important;
+        padding-left: 0.45rem !important;
+        padding-right: 0.4rem !important;
     }
 
     body.page-profile .profile-preferences-stack .notifications-item--reminder-time .time-input::-webkit-calendar-picker-indicator {
-        transform: translateX(-14px);
         cursor: pointer;
         opacity: 0.92;
+        margin-inline-end: 0.55rem;
+        margin-left: 0;
+        position: relative;
+        right: 6px;
+        transform: translateX(-10px);
     }
 
     @media (max-width: 768px) {
