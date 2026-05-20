@@ -104,11 +104,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof window.DiariOffline?.registerPageRefreshHandler === 'function') {
         window.DiariOffline.registerPageRefreshHandler(refreshDashboardFromSyncedStorage);
     }
-    if (window.DiariOffline?.awaitServerState) {
-        await window.DiariOffline.awaitServerState();
-    } else {
-        await syncEntriesFromApi();
-    }
+    // Cache-first paint: render immediately, then refresh from server in background.
     refreshDashboardFromSyncedStorage();
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
@@ -184,6 +180,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (window.DiariOffline?.wirePwaPageAutoSync) {
         window.DiariOffline.wirePwaPageAutoSync(refreshDashboardFromSyncedStorage);
     }
+    setTimeout(() => {
+        void (async () => {
+            try {
+                await syncEntriesFromApi();
+                refreshDashboardFromSyncedStorage();
+            } catch (error) {
+                console.warn('Dashboard background sync failed:', error);
+            }
+        })();
+    }, 0);
     } finally {
         if (window.DiariShell && typeof window.DiariShell.release === 'function') {
             window.DiariShell.release();

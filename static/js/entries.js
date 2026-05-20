@@ -104,15 +104,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         }
     } catch (_) {}
 
-    if (typeof window.DiariOffline?.awaitServerState === 'function') {
-        await window.DiariOffline.awaitServerState();
-    } else {
-        await syncEntriesFromApi();
-    }
+    // Cache-first paint: hydrate quickly, then sync in the background.
+    initializeEntriesFromStorage();
     if (isPwaOfflineEntriesUi()) {
         entriesPwaInitialSyncDone = true;
     }
-    initializeEntriesFromStorage();
     if (window.DiariShell && typeof window.DiariShell.release === 'function') {
         window.DiariShell.release();
     }
@@ -139,6 +135,16 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (typeof window.DiariOffline?.wirePwaPageAutoSync === 'function') {
         window.DiariOffline.wirePwaPageAutoSync(refreshEntriesFromSyncedStorage);
     }
+    setTimeout(() => {
+        void (async () => {
+            try {
+                await syncEntriesFromApi();
+                refreshEntriesFromSyncedStorage();
+            } catch (error) {
+                console.warn('Entries background sync failed:', error);
+            }
+        })();
+    }, 0);
 
     if (isPwaOfflineEntriesUi()) {
         window.addEventListener('online', () => {
@@ -206,7 +212,7 @@ function startPwaEntriesConnectivityWatch() {
     if (!isPwaOfflineEntriesUi() || entriesPwaConnectivityTimer != null) return;
     entriesPwaConnectivityTimer = window.setInterval(() => {
         void tickPwaEntriesConnectivity();
-    }, 4000);
+    }, 10000);
     void tickPwaEntriesConnectivity();
 }
 
