@@ -2790,10 +2790,15 @@ async function syncPushNotificationPrefsToServerFromProfile() {
         if (!res.ok) {
             const t = await res.text().catch(() => '');
             console.warn('[Profile] push notification prefs sync failed', res.status, t);
+            return { ok: false, status: res.status, schedule: null };
         }
+        const data = await res.json().catch(() => ({}));
+        return { ok: !!data.success, status: res.status, schedule: data.schedule || null };
     } catch (e) {
         console.warn('[Profile] push notification prefs sync error', e);
+        return { ok: false, status: 0, schedule: null };
     }
+    return { ok: false, status: 0, schedule: null };
 }
 
 function initializeReminderTimePreference() {
@@ -2811,9 +2816,9 @@ function initializeReminderTimePreference() {
             }
         } catch (_) { /* ignore */ }
         if (window.DiariPwaNotifications?.syncPrefsToWorker) {
-            void window.DiariPwaNotifications.syncPrefsToWorker();
+            await window.DiariPwaNotifications.syncPrefsToWorker();
         }
-        await syncPushNotificationPrefsToServerFromProfile();
+        const syncResult = await syncPushNotificationPrefsToServerFromProfile();
         if (window.DiariPwaWebPush?.syncNotificationPrefsToServer) {
             await window.DiariPwaWebPush.syncNotificationPrefsToServer();
         }
@@ -2824,7 +2829,7 @@ function initializeReminderTimePreference() {
             } else {
                 await registerPushFromProfile({ quiet: true, force: true });
             }
-            if (!(await isPwaOfflineForUserActions())) {
+            if (!(await isPwaOfflineForUserActions()) && syncResult?.ok) {
                 const reminderSavedMsg = 'Reminder time set successfully.';
                 if (isPwaProfileContext()) {
                     document
@@ -2837,6 +2842,13 @@ function initializeReminderTimePreference() {
                     }
                 } else {
                     showNotification(reminderSavedMsg, 'success', 3500);
+                }
+            } else if (!(await isPwaOfflineForUserActions()) && !syncResult?.ok) {
+                const warnMsg = 'Reminder time was saved locally but server sync is delayed. Please try again in a moment.';
+                if (window.DiariToast && typeof window.DiariToast.show === 'function') {
+                    window.DiariToast.show(warnMsg, 'warning', 4500);
+                } else {
+                    showNotification(warnMsg, 'warning', 4500);
                 }
             }
         }
