@@ -218,11 +218,7 @@ function startPwaEntriesConnectivityWatch() {
 
 async function runPwaEntriesSyncNow() {
     if (!isPwaOfflineEntriesUi() || navigator.onLine === false) return;
-    if (typeof window.DiariOffline?.requestPwaSync === 'function') {
-        await window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
-    } else {
-        await syncEntriesFromApi();
-    }
+    await syncEntriesFromApi();
     initializeEntriesFromStorage({ preserveNavigation: true });
     entriesPwaInitialSyncDone = true;
 }

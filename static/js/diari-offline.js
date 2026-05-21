@@ -297,22 +297,6 @@
         global.localStorage.setItem(ENTRY_DELETE_QUEUE_KEY, JSON.stringify(rows));
     }
 
-    function getDeleteQueueKeySet() {
-        const keys = new Set();
-        readDeleteQueue().forEach((row) => {
-            const k = String(row?.entryKey ?? row?.entryId ?? '');
-            if (k) keys.add(k);
-        });
-        return keys;
-    }
-
-    function filterServerEntriesRespectingDeletes(serverEntries) {
-        if (!isPwaUiContext()) return serverEntries;
-        const tombstones = getDeleteQueueKeySet();
-        if (!tombstones.size) return serverEntries;
-        return (serverEntries || []).filter((s) => !tombstones.has(String(s?.id ?? '')));
-    }
-
     function findEntryIndexInCache(list, entryKey) {
         const key = String(entryKey ?? '');
         return list.findIndex((e) => String(e?.id ?? '') === key);
@@ -435,7 +419,7 @@
     }
 
     async function flushPendingEntryDeletes() {
-        if (!isPwaUiContext() || !isOnline()) return;
+        if (!isPwaUiContext()) return;
         const userId = getUserId();
         if (!userId) return;
 
@@ -483,7 +467,7 @@
 
     function hasQueuedDeleteForEntry(entryKey) {
         const key = String(entryKey ?? '');
-        return readDeleteQueue().some((r) => String(r?.entryKey ?? r?.entryId ?? '') === key);
+        return readDeleteQueue().some((r) => String(r?.entryId ?? '') === key);
     }
 
     function readPwaPendingProfile() {
@@ -692,9 +676,7 @@
 
     /** Keep unsynced PWA offline drafts when refreshing from the server. */
     function mergeServerEntriesWithLocal(serverEntries, userId) {
-        const server = filterServerEntriesRespectingDeletes(
-            Array.isArray(serverEntries) ? serverEntries : []
-        );
+        const server = Array.isArray(serverEntries) ? serverEntries : [];
         if (!isPwaUiContext()) {
             writeEntriesCache(server, userId);
             return server;
@@ -706,7 +688,6 @@
             return server;
         }
         const localById = new Map(local.map((e) => [String(e?.id ?? ''), e]));
-        const deleteKeys = getDeleteQueueKeySet();
         const mergedServer = server.map((s) => {
             const key = String(s?.id ?? '');
             const loc = localById.get(key);
@@ -738,7 +719,6 @@
         const serverIds = new Set(server.map((e) => String(e?.id ?? '')));
         const kept = pending.filter((e) => {
             const id = String(e?.id ?? '');
-            if (deleteKeys.has(id)) return false;
             return !serverIds.has(id);
         });
         const merged = [...mergedServer, ...kept];
@@ -756,9 +736,7 @@
      */
     function applyServerEntriesOnRefresh(serverEntries, userId) {
         sanitizeEntriesCachePwaFlags();
-        const server = filterServerEntriesRespectingDeletes(
-            Array.isArray(serverEntries) ? serverEntries : []
-        );
+        const server = Array.isArray(serverEntries) ? serverEntries : [];
         if (!isPwaUiContext()) {
             writeEntriesCache(server, userId, { forceNotify: true });
             return server;
@@ -797,11 +775,9 @@
             return s;
         });
 
-        const deleteKeys = getDeleteQueueKeySet();
         const extra = local.filter((e) => {
             if (!e) return false;
             const id = String(e?.id ?? '');
-            if (deleteKeys.has(id)) return false;
             if (serverIds.has(id)) return false;
             if (id.startsWith('offline_')) return true;
             return isOfflineLocalEntry(e);
@@ -2018,20 +1994,10 @@
         const force = options.force === true;
 
         remotePullPromise = (async () => {
-            let pending = false;
-            try {
-                pending = force || (await hasPendingOfflineWorkAsync());
-            } catch {
-                pending = force || hasPendingOfflineWork();
-            }
-            if (pending) {
-                await runPrePullFlush();
-            }
-
             if (!force) {
                 try {
                     const rev = await hasRemoteRevisionChanged();
-                    if (!rev.changed && !rev.authExpired && !pending) {
+                    if (!rev.changed && !rev.authExpired) {
                         return { ok: true, skipped: true, reason: 'revision-unchanged' };
                     }
                     if (rev.authExpired) {
@@ -2040,6 +2006,16 @@
                 } catch {
                     /* fall through to full pull on revision check failure */
                 }
+            }
+
+            let pending = false;
+            try {
+                pending = force || (await hasPendingOfflineWorkAsync());
+            } catch {
+                pending = force || hasPendingOfflineWork();
+            }
+            if (pending) {
+                await runPrePullFlush();
             }
 
             const result = await pullFromServerHard();
