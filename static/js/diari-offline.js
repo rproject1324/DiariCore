@@ -306,44 +306,6 @@
         return keys;
     }
 
-    function isEntryKeyInDeleteQueue(entryKey) {
-        const key = String(entryKey ?? '');
-        if (!key) return false;
-        return readDeleteQueue().some((row) => String(row?.entryKey ?? row?.entryId ?? '') === key);
-    }
-
-    /** After an offline draft syncs to the server, point pending deletes at the real entry id. */
-    function remapDeleteQueueOfflineToServer(localEntryId, serverEntryId) {
-        const from = String(localEntryId ?? '');
-        const to = String(serverEntryId ?? '');
-        if (!from || !to || from === to) return;
-        const q = readDeleteQueue();
-        let changed = false;
-        const next = q.map((row) => {
-            if (String(row?.entryKey ?? '') !== from) return row;
-            changed = true;
-            return {
-                ...row,
-                entryKey: to,
-                localOnly: false,
-                offlineSourceId: from,
-            };
-        });
-        if (changed) writeDeleteQueue(next);
-    }
-
-    function resolveServerEntryIdForDeleteRow(row) {
-        const key = String(row?.entryKey ?? '');
-        if (!key) return 0;
-        const direct = Number(key);
-        if (Number.isInteger(direct) && direct > 0) return direct;
-        const list = readEntriesCache();
-        const hit = list.find((e) => String(e?.id ?? '') === key || String(e?.offlineSourceId ?? '') === key);
-        if (!hit) return 0;
-        const id = Number(hit.id);
-        return Number.isInteger(id) && id > 0 ? id : 0;
-    }
-
     function filterServerEntriesRespectingDeletes(serverEntries) {
         if (!isPwaUiContext()) return serverEntries;
         const tombstones = getDeleteQueueKeySet();
@@ -487,18 +449,12 @@
             const key = String(row.entryKey || '');
             try {
                 if (row.localOnly || key.startsWith('offline_')) {
-                    await removePendingCreateByLocalEntryId(key);
-                    let list = readEntriesCache().filter((e) => {
-                        const id = String(e?.id ?? '');
-                        return id !== key && String(e?.offlineSourceId ?? '') !== key;
-                    });
+                    const list = readEntriesCache().filter((e) => String(e?.id) !== key);
                     writeEntriesCache(list, userId);
                     continue;
                 }
-                const numericId = resolveServerEntryIdForDeleteRow(row);
+                const numericId = Number(key);
                 if (!Number.isInteger(numericId) || numericId <= 0) {
-                    console.warn('[DiariOffline] Pending delete has no server id:', key);
-                    remaining.push(row);
                     continue;
                 }
                 const res = await fetchFn(`/api/entries/${numericId}`, {
@@ -510,16 +466,7 @@
                 if (!res.ok || !data?.success) {
                     throw new Error(data?.error || 'Delete sync failed');
                 }
-                const idStr = String(numericId);
-                const offlineSrc = String(row.offlineSourceId || '');
-                const list = readEntriesCache().filter((e) => {
-                    const id = String(e?.id ?? '');
-                    if (id === idStr || id === key) return false;
-                    if (offlineSrc && (id === offlineSrc || String(e?.offlineSourceId ?? '') === offlineSrc)) {
-                        return false;
-                    }
-                    return true;
-                });
+                const list = readEntriesCache().filter((e) => String(e?.id) !== key);
                 writeEntriesCache(list, userId);
             } catch (e) {
                 console.warn('[DiariOffline] Pending delete sync failed:', key, e);
@@ -1440,21 +1387,12 @@
     }
 
     async function flushPendingEntryCreates() {
-        if (!isPwaUiContext() || !isOnline()) return;
+        if (!isOnline()) return;
         const userId = getUserId();
         if (!userId) return;
 
-        const deleteKeys = getDeleteQueueKeySet();
-        const pending = (await pendingEntriesGetAll()).filter((item) => {
-            const localId = String(item?.localEntryId || '');
-            if (localId && deleteKeys.has(localId)) return false;
-            return true;
-        });
+        const pending = await pendingEntriesGetAll();
         for (const item of pending) {
-            if (item?.localEntryId && isEntryKeyInDeleteQueue(item.localEntryId)) {
-                await pendingEntryDelete(item.id);
-                continue;
-            }
             try {
                 const imageUrls = [];
                 for (const img of item.images || []) {
@@ -1489,36 +1427,8 @@
                     throw new Error(result?.error || 'Offline sync entry save failed');
                 }
                 if (item.localEntryId) {
-                    const localId = String(item.localEntryId);
-                    if (isEntryKeyInDeleteQueue(localId)) {
-                        remapDeleteQueueOfflineToServer(localId, result.entry.id);
-                        await pendingEntryDelete(item.id);
-                        const serverId = Number(result.entry.id);
-                        if (Number.isInteger(serverId) && serverId > 0) {
-                            const fetchFnDel = global.DiariSecurity?.apiFetch || global.fetch;
-                            const delRes = await fetchFnDel(`/api/entries/${serverId}`, {
-                                method: 'DELETE',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ userId }),
-                            });
-                            const delData = await delRes.json().catch(() => ({}));
-                            if (!delRes.ok || !delData?.success) {
-                                throw new Error(delData?.error || 'Delete after create sync failed');
-                            }
-                            const qAfter = readDeleteQueue().filter(
-                                (r) => String(r?.entryKey ?? '') !== String(serverId)
-                            );
-                            writeDeleteQueue(qAfter);
-                            const listAfter = readEntriesCache().filter(
-                                (e) => String(e?.id ?? '') !== String(serverId)
-                            );
-                            writeEntriesCache(listAfter, userId);
-                        }
-                        continue;
-                    }
-                    remapEditQueueEntryId(localId, result.entry.id);
-                    remapDeleteQueueOfflineToServer(localId, result.entry.id);
-                    removeOfflineEntryByLocalId(localId, userId);
+                    remapEditQueueEntryId(item.localEntryId, result.entry.id);
+                    removeOfflineEntryByLocalId(item.localEntryId, userId);
                 }
                 mergeEntryIntoCache(
                     {
@@ -1613,9 +1523,9 @@
             }
 
             global.dispatchEvent(new CustomEvent('diari-offline-sync'));
-            await flushPendingEntryDeletes();
             await flushPendingEntryCreates();
             await flushPendingEntryEdits();
+            await flushPendingEntryDeletes();
             await flushTagSyncQueue();
             await flushPwaProfilePending();
             await flushPwaAvatarPending();
@@ -1957,7 +1867,6 @@
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
     const LIVE_REMOTE_SYNC_MS = 45000;
-    const LIVE_REMOTE_SYNC_START_DELAY_MS = 2500;
     let remotePullPromise = null;
     let syncEventSource = null;
     let syncEventSourceRetries = 0;
@@ -2080,9 +1989,9 @@
         }
         if (pending) {
             try {
-                await flushPendingEntryDeletes();
                 await flushPendingEntryCreates();
                 await flushPendingEntryEdits();
+                await flushPendingEntryDeletes();
                 await flushTagSyncQueue();
                 await flushPwaProfilePending();
                 await flushPwaAvatarPending();
