@@ -23,12 +23,6 @@
     const PWA_PENDING_UI_PREFS_KEY = 'diariCorePwaPendingUiPrefs';
     const PWA_PENDING_AVATAR_KEY = 'diariCorePwaPendingAvatar';
     const SYNC_REV_KEY = 'diariCoreSyncRevision';
-    /** After login prefetch, skip redundant full boot pull for this window (ms). */
-    const BOOT_SYNC_FRESH_MS = 60000;
-    const BOOT_SYNC_FRESH_KEY = 'diariBootSyncFreshAt';
-    const PULL_DEBOUNCE_MS = 900;
-    const PWA_CONNECTIVITY_POLL_MS = 30000;
-    const MAX_REANALYZE_PER_SYNC = 2;
 
     const PUBLIC_PAGES = new Set([
         'login.html',
@@ -74,7 +68,7 @@
 
         async function tryUrl(url) {
             const ctrl = new AbortController();
-            const timer = global.setTimeout(() => ctrl.abort(), 2000);
+            const timer = global.setTimeout(() => ctrl.abort(), 3500);
             try {
                 const res = await fetchFn(url, { ...probeOpts, signal: ctrl.signal });
                 global.clearTimeout(timer);
@@ -1627,6 +1621,7 @@
             await flushPwaAvatarPending();
             await flushPwaUiPrefsPending();
             sanitizeEntriesCachePwaFlags();
+            await reanalyzeCachedFallbackEntries();
             await syncEntriesFromApi({
                 skipReachabilityProbe: true,
                 trustNavigatorOnline: trustNav,
@@ -1637,9 +1632,6 @@
                 trustNavigatorOnline: trustNav,
                 remoteWins: opts.remoteWins !== false,
             });
-            global.setTimeout(() => {
-                void reanalyzeCachedFallbackEntries();
-            }, 0);
             return { ok: true };
         })()
             .catch((e) => {
@@ -1759,22 +1751,17 @@
             global.addEventListener('diari-user-updated', refresh);
         }
 
-        const afterPull = (result) => {
-            if (refresh && result && result.ok !== false) refresh();
-        };
-        const kickSoon = () => {
+        const kick = () => {
             if (!isOnline()) return;
-            void schedulePullRemoteStateForRefresh().then(afterPull);
-        };
-        const kickNow = () => {
-            if (!isOnline()) return;
-            void pullRemoteStateForRefresh().then(afterPull);
+            void pullRemoteStateForRefresh().then(() => {
+                if (refresh) refresh();
+            });
         };
 
-        global.addEventListener('online', kickNow);
-        global.addEventListener('pageshow', kickSoon);
+        global.addEventListener('online', kick);
+        global.addEventListener('pageshow', kick);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') kickSoon();
+            if (document.visibilityState === 'visible') kick();
         });
     }
 
@@ -1918,12 +1905,9 @@
 
         const list = readEntriesCache();
         const fetchFn = global.DiariSecurity?.apiFetch || global.fetch;
-        let reanalyzeCount = 0;
 
         for (const entry of list) {
-            if (reanalyzeCount >= MAX_REANALYZE_PER_SYNC) break;
             if (!entryNeedsServerReanalysis(entry)) continue;
-            reanalyzeCount += 1;
             const numericId = Number(entry.id);
             if (!Number.isInteger(numericId) || numericId <= 0) continue;
             try {
@@ -1972,11 +1956,9 @@
     let remoteStateWatchStarted = false;
     let liveRemoteSyncStarted = false;
     let liveRemoteSyncTimer = null;
-    const LIVE_REMOTE_SYNC_MS = 90000;
-    const LIVE_REMOTE_SYNC_START_DELAY_MS = 4000;
+    const LIVE_REMOTE_SYNC_MS = 45000;
+    const LIVE_REMOTE_SYNC_START_DELAY_MS = 2500;
     let remotePullPromise = null;
-    let pullDebounceTimer = null;
-    let pullDebouncePromise = null;
     let syncEventSource = null;
     let syncEventSourceRetries = 0;
     let pwaLastReachable = null;
@@ -2046,7 +2028,6 @@
                     /* ignore */
                 }
             }
-            markBootSyncFresh();
 
             notifyRemoteStateRefresh();
             runPageRefreshHandlers();
@@ -2113,51 +2094,6 @@
         sanitizeEntriesCachePwaFlags();
     }
 
-    function isBootSyncFresh() {
-        try {
-            const t = Number(global.sessionStorage.getItem(BOOT_SYNC_FRESH_KEY) || 0);
-            return t > 0 && Date.now() - t < BOOT_SYNC_FRESH_MS;
-        } catch {
-            return false;
-        }
-    }
-
-    function markBootSyncFresh() {
-        try {
-            global.sessionStorage.setItem(BOOT_SYNC_FRESH_KEY, String(Date.now()));
-        } catch {
-            /* ignore */
-        }
-    }
-
-    /**
-     * Debounced pull for focus/visibility/SSE — avoids stacked /api/sync/state calls.
-     */
-    function schedulePullRemoteStateForRefresh(options = {}) {
-        if (options.force === true) {
-            if (pullDebounceTimer) {
-                global.clearTimeout(pullDebounceTimer);
-                pullDebounceTimer = null;
-            }
-            pullDebouncePromise = null;
-            return pullRemoteStateForRefresh(options);
-        }
-        if (pullDebouncePromise) return pullDebouncePromise;
-        pullDebouncePromise = new Promise((resolve) => {
-            if (pullDebounceTimer) global.clearTimeout(pullDebounceTimer);
-            pullDebounceTimer = global.setTimeout(() => {
-                pullDebounceTimer = null;
-                pullRemoteStateForRefresh(options)
-                    .then(resolve)
-                    .catch(() => resolve({ ok: false, reason: 'error' }))
-                    .finally(() => {
-                        pullDebouncePromise = null;
-                    });
-            }, PULL_DEBOUNCE_MS);
-        });
-        return pullDebouncePromise;
-    }
-
     /**
      * Force a network pull + UI refresh (page reload, tab return, live sync).
      * @param {{ force?: boolean }} options - force=true skips revision check (page load).
@@ -2219,9 +2155,7 @@
 
     function startBootServerSync() {
         if (bootServerSyncPromise || !isAuthenticatedAppPage()) return;
-        const needsFullPull = !hasUsableLocalCache();
-        const force = needsFullPull && !isBootSyncFresh();
-        bootServerSyncPromise = pullRemoteStateForRefresh({ force }).finally(() => {
+        bootServerSyncPromise = pullRemoteStateForRefresh({ force: true }).finally(() => {
             bootServerSyncPromise = null;
         });
     }
@@ -2251,7 +2185,7 @@
         if (bootServerSyncPromise) {
             return bootServerSyncPromise;
         }
-        return pullRemoteStateForRefresh({ force: !hasUsableLocalCache() });
+        return pullRemoteStateForRefresh({ force: true });
     }
 
     function stopSyncEventStream() {
@@ -2282,7 +2216,7 @@
 
         syncEventSource.onmessage = (ev) => {
             if (!ev || !ev.data) return;
-            void schedulePullRemoteStateForRefresh();
+            void pullRemoteStateForRefresh({ force: true });
         };
 
         syncEventSource.onerror = () => {
@@ -2304,7 +2238,7 @@
         const tick = () => {
             if (!isAuthenticatedAppPage()) return;
             if (document.visibilityState === 'hidden') return;
-            void schedulePullRemoteStateForRefresh();
+            void pullRemoteStateForRefresh();
         };
 
         const begin = () => {
@@ -2330,20 +2264,16 @@
         if (remoteStateWatchStarted) return;
         remoteStateWatchStarted = true;
 
-        const kickSoon = () => {
-            if (!isAuthenticatedAppPage()) return;
-            void schedulePullRemoteStateForRefresh();
-        };
-        const kickNow = () => {
+        const kick = () => {
             if (!isAuthenticatedAppPage()) return;
             void pullRemoteStateForRefresh();
         };
 
-        global.addEventListener('pageshow', kickSoon);
-        global.addEventListener('online', kickNow);
-        global.addEventListener('focus', kickSoon);
+        global.addEventListener('pageshow', kick);
+        global.addEventListener('online', kick);
+        global.addEventListener('focus', kick);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') kickSoon();
+            if (document.visibilityState === 'visible') kick();
         });
 
         try {
@@ -2377,19 +2307,9 @@
         global.addEventListener('offline', refreshPwaProfileOfflineUi);
         global.addEventListener('online', refreshPwaProfileOfflineUi);
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                void (async () => {
-                    const pending = await hasPendingOfflineWorkAsync();
-                    if (pending) kickSync();
-                })();
-            }
+            if (document.visibilityState === 'visible') kickSync();
         });
-        global.addEventListener('pageshow', () => {
-            void (async () => {
-                const pending = await hasPendingOfflineWorkAsync();
-                if (pending) kickSync();
-            })();
-        });
+        global.addEventListener('pageshow', kickSync);
 
         global.setInterval(() => {
             void (async () => {
@@ -2397,27 +2317,18 @@
                     pwaLastReachable = false;
                     return;
                 }
-                let pending = false;
-                try {
-                    pending = await hasPendingOfflineWorkAsync();
-                } catch {
-                    pending = hasPendingOfflineWork();
-                }
-                if (!pending && pwaLastReachable !== false) return;
-
                 let reachable = true;
-                if (pending || pwaLastReachable === false) {
-                    try {
-                        reachable = await probeReachability();
-                    } catch {
-                        reachable = false;
-                    }
+                try {
+                    reachable = await probeReachability();
+                } catch {
+                    reachable = false;
                 }
                 const wasDown = pwaLastReachable === false;
                 pwaLastReachable = reachable;
+                const pending = await hasPendingOfflineWorkAsync();
                 if (reachable && (wasDown || pending)) kickSync();
             })();
-        }, PWA_CONNECTIVITY_POLL_MS);
+        }, 5000);
     }
 
     function guardOfflineAuth() {

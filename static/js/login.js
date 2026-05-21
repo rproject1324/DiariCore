@@ -1091,18 +1091,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (data.syncRevision) {
                         localStorage.setItem('diariCoreSyncRevision', String(data.syncRevision));
                     }
-                    try {
-                        sessionStorage.setItem('diariBootSyncFreshAt', String(Date.now()));
-                    } catch (_) {
-                        /* ignore */
-                    }
                 }
             })
             .catch(function () {
                 /* redirect anyway; app page will pull again */
             })
             .finally(function () {
-                setTimeout(goAfterLoginHydrate, u.isAdmin ? 400 : 450);
+                setTimeout(goAfterLoginHydrate, u.isAdmin ? 400 : 700);
             });
     }
     
