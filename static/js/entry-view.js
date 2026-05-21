@@ -197,6 +197,9 @@
     }
 
     async function shouldActOffline() {
+        if (window.DiariOffline && typeof window.DiariOffline.shouldActOffline === 'function') {
+            return window.DiariOffline.shouldActOffline();
+        }
         return shouldSaveEntryAsOffline();
     }
 

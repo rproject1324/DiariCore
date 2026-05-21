@@ -219,7 +219,17 @@ function startPwaEntriesConnectivityWatch() {
 async function runPwaEntriesSyncNow() {
     if (!isPwaOfflineEntriesUi() || navigator.onLine === false) return;
     if (typeof window.DiariOffline?.requestPwaSync === 'function') {
-        await window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
+        const result = await window.DiariOffline.requestPwaSync({ trustNavigatorOnline: true });
+        if (!result?.ok && typeof window.DiariOffline?.flushPendingEntryDeletes === 'function') {
+            await window.DiariOffline.flushPendingEntryDeletes();
+            if (typeof window.DiariOffline?.syncEntriesFromApi === 'function') {
+                await window.DiariOffline.syncEntriesFromApi({
+                    skipReachabilityProbe: true,
+                    trustNavigatorOnline: true,
+                    remoteWins: true,
+                });
+            }
+        }
     } else {
         await syncEntriesFromApi();
     }
