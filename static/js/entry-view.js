@@ -722,7 +722,12 @@
         const listEntry = loadEntryFromList(entryKey);
         let entry = listEntry;
 
-        if (!entry && isOnline() && numericEntryId > 0) {
+        const needsFullFetch =
+            isOnline() &&
+            numericEntryId > 0 &&
+            (!entry || entry.isPreview === true || String(entry.text || '').trim().length < 60);
+
+        if (needsFullFetch) {
             const loadingTags =
                 '<span class="entry-view-tags-await" style="color:var(--text-muted);font-size:0.85rem;">Loading…</span>';
             tagsRead.innerHTML = loadingTags;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,6 +17,26 @@ _worker_pid: int | None = None
 
 def _internal_cron_disabled() -> bool:
     return os.environ.get("DISABLE_INTERNAL_PUSH_CRON", "").lower() in ("1", "true", "yes")
+
+def _acquire_cross_process_lock() -> bool:
+    """
+    Ensure only one push cron loop runs across multiple gunicorn workers.
+    Uses an atomic lock file creation in the OS temp directory.
+    """
+    name = os.environ.get("DIARI_PUSH_CRON_LOCK", "diaricore_push_cron.lock").strip() or "diaricore_push_cron.lock"
+    path = os.path.join(tempfile.gettempdir(), name)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        try:
+            os.write(fd, str(os.getpid()).encode("utf-8", errors="ignore"))
+        finally:
+            os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+    except Exception:
+        # If locking fails unexpectedly, do not start duplicate loops.
+        return False
 
 
 def status() -> dict:
@@ -51,6 +72,9 @@ def start(worker_id: int | None = None) -> None:
             )
             return
         if not (os.environ.get("VAPID_PUBLIC_KEY") or "").strip():
+            return
+        if not _acquire_cross_process_lock():
+            print("[diari-push-cron] skipped (another worker holds lock)", flush=True)
             return
         _started_workers.add(wid)
         _worker_pid = wid

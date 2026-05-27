@@ -617,6 +617,23 @@ def serialize_entry(row):
     }
 
 
+def serialize_entry_list_item(row):
+    """
+    Lightweight list payload for Entries/Dashboard/sync state.
+    Keeps UI-compatible fields while avoiding large text and probability blobs.
+    Full entry content is available via GET /api/entries/<id>.
+    """
+    if not row:
+        return None
+    base = serialize_entry(row)
+    text = base.get("text") or ""
+    first_line = text.split("\n", 1)[0].strip() if isinstance(text, str) else ""
+    base["text"] = first_line[:240]
+    base["all_probs"] = {}
+    base["isPreview"] = True
+    return base
+
+
 def _parse_ph_local_to_utc_iso(local_dt: str) -> str | None:
     s = str(local_dt or "").strip()
     if not s:
@@ -1151,7 +1168,7 @@ def api_sync_state():
             "serverTime": datetime.now(timezone.utc).isoformat(),
             "syncRevision": _compute_sync_revision(user_id, row, rows),
             "user": serialize_user(row),
-            "entries": [serialize_entry(r) for r in rows],
+            "entries": [serialize_entry_list_item(r) for r in rows],
         }
     )
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -1959,7 +1976,7 @@ def api_entries_get():
     if not user:
         return jsonify({"success": False, "error": "User not found."}), 404
     rows = db.get_journal_entries_by_user(user_id)
-    resp = jsonify({"success": True, "entries": [serialize_entry(r) for r in rows]})
+    resp = jsonify({"success": True, "entries": [serialize_entry_list_item(r) for r in rows]})
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     return resp, 200
