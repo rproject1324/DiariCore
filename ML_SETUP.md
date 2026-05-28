@@ -1,72 +1,60 @@
 # ML Setup — DiariCore
 
-DiariCore uses **HuggingFace Inference API** for mood analysis.
-The model (`sseia/diari-core-mood`) is hosted on HuggingFace Hub as an ONNX file,
-so **no ML service runs on Railway** — only the lightweight web app does.
+Production mood analysis does **not** run on Railway or EC2. The web app calls a **HuggingFace Space** over HTTP.
 
 ## Architecture
 
 ```
-User writes entry
+User saves entry
       │
       ▼
-Railway Web App (app.py)   ← only service on Railway free tier
-      │  uses hf_nlp.py
+Railway / EC2 (app.py)
+      │  space_nlp.analyze()
       ▼
-HuggingFace Inference API  ← free, serverless, ONNX-backed
-(sseia/diari-core-mood)
+HF Space (sseia/diaricore-inference)  ← ONNX on HF free CPU tier
       │
       ▼
-Returns: emotionLabel, emotionScore, sentimentLabel, sentimentScore
+emotionLabel, emotionScore, sentimentLabel, all_probs
 ```
 
-## Railway Environment Variables (web service only)
+If the Space is down or cold-starting, `space_nlp.py` uses a small keyword **fallback** (same API shape).
 
-| Variable        | Value                          | Required |
-|-----------------|--------------------------------|----------|
-| `HF_API_TOKEN`  | Your HuggingFace read token    | Yes (model may be private) |
-| `HF_EMOTION_MODEL` | `sseia/diari-core-mood`     | Optional (this is the default) |
-| `DATABASE_URL`  | Postgres connection string     | Yes (Railway Postgres plugin) |
-| `SECRET_KEY`    | Flask session secret           | Yes |
+## Environment variables (web service)
 
-## Uploading the ONNX model to HuggingFace Hub
+| Variable     | Default / example                              | Required |
+|-------------|-------------------------------------------------|----------|
+| `SPACE_URL` | `https://sseia-diaricore-inference.hf.space`   | Optional |
+| `DATABASE_URL` | Postgres on Railway / EC2                  | Yes (prod) |
+| `SECRET_KEY`   | Flask session secret                         | Yes (prod) |
 
-Run this **once** from your local machine after training a new model:
+No `HF_API_TOKEN` is required on the web app for mood (the Space serves the model).
+
+## HuggingFace Space (separate deploy)
+
+Code lives in `hf_space/`. Upload or update:
 
 ```powershell
-# Install export deps (one-time)
-.venv\Scripts\pip install "onnx>=1.16.0" "onnxruntime>=1.18.0" "huggingface_hub>=0.22.0"
-
-# Export + validate + upload (needs HF token with write access)
-$env:HF_TOKEN = "hf_your_write_token_here"
-.venv\Scripts\python.exe scripts/export_onnx.py
-
-# Optional: also produce an INT8-quantized version (~70% smaller)
-.venv\Scripts\python.exe scripts/export_onnx.py --quantize
-
-# Push to main branch instead of the default 'onnx' branch
-.venv\Scripts\python.exe scripts/export_onnx.py --branch main
+py scripts/upload_space.py
 ```
 
-The script:
-1. Loads `model/pytorch_model.bin` using the custom training class
-2. Exports to ONNX (opset 14, dynamic axes)
-3. Validates PyTorch vs ONNX output parity
-4. Uploads `model.onnx`, `config.json`, `label_map.json`, and tokenizer files to HF Hub
+Space env (on HuggingFace): `HF_MODEL_ID`, optional `HF_TOKEN` if the Hub repo is private.
 
-## Local Development
+## Voice transcription (optional)
 
-For local development, `hf_nlp.py` falls back gracefully if `HF_API_TOKEN` is not set
-(uses a keyword-based heuristic). Set it in a `.env`-style approach:
+`hf_speech.py` uses the HuggingFace Inference API (`HF_SPEECH_MODEL`, `HF_API_TOKEN` / `HF_TOKEN`) from `app.py` voice routes — unrelated to the mood Space.
+
+## Local development
+
+Run only the web app (uses the same HF Space as production):
 
 ```powershell
-$env:HF_API_TOKEN = "hf_your_read_token_here"
 .venv\Scripts\python.exe app.py
 ```
 
-## Notes
+Or: `powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1`
 
-- Do **not** commit `HF_API_TOKEN` or any secrets. Use Railway environment variables.
-- The `ml-service/` folder is kept for reference / local heavy testing only.
-  It is **not deployed** to Railway.
-- `ml_client.py` is also kept for reference but is **no longer used** by `app.py`.
+Set `DATABASE_PATH=diaricore.local.db` for SQLite, or `DATABASE_URL` for Postgres.
+
+## Removed from repo (size)
+
+Legacy local paths were removed: `model/pytorch_model.bin`, `model/onnx_export/`, `ml-service/`, `hf_nlp.py`, `onnx_nlp.py`, `ml_client.py`. They were not used by `app.py` at deploy time.

@@ -7,18 +7,12 @@ diaricore.local.db
 .env
 *.log
 
-# Model weights — stored on HuggingFace Hub, not in git
-model/pytorch_model.bin
-model/onnx_export/
+# Local model weights — on HuggingFace Hub only (see model/README.md)
+model/*
+!model/README.md
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
 # Local clones / nested repos (keep outside git)
 hf_space_clone/
-
-# Notebook scratch exports (not used by runtime)
-model/nb_*.txt
-
-# ML experiment notebooks (keep out of app repo by default)
-ml-service/*KeyBERT*.ipynb
