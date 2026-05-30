@@ -80,28 +80,29 @@ To design, develop, integrate, deploy, and document a fully functional **intelli
 
 ## 4. Scope and Limitations
 
-### In Scope
+### Project Scope
 
-| Area | Coverage |
-|------|----------|
-| **Users** | Students and individuals seeking private digital journaling |
-| **Platform** | Web browser; installable PWA on supported devices |
-| **Auth** | Register, OTP verify, login, logout, password reset, optional TOTP 2FA, admin panel |
-| **Journal** | Text entries, titles, tags, images, mood/sentiment fields, list/filter/search |
-| **ML** | Five-class emotion + sentiment; keyword fallback if API unavailable |
-| **Analytics** | Dashboard charts, insights page, streak/reminder logic |
-| **Database** | PostgreSQL (production), SQLite (local dev); multiple related tables |
-| **Deployment** | Railway + AWS EC2 (nginx, Gunicorn, Postgres) |
+This project focuses on the development of **DiariCore**, an intelligent web-based personal journaling system with emotion analysis, analytics, and Progressive Web Application support. The system is intended for **students and individuals** who want a private, organized space to record daily thoughts and observe emotional patterns over time. It runs in a **standard web browser** and can be **installed as a PWA** on supported mobile and desktop devices for an app-like experience.
+
+The application includes **user account management** with registration, email OTP verification, secure login and logout, password reset, optional two-factor authentication (TOTP), and an **admin panel** for users whose email matches the configured administrator address. The core **journal module** supports creating, reading, updating, and deleting entries with titles, timestamps, custom tags, optional image attachments, and stored mood and sentiment fields produced by machine learning. Users can browse and filter entries by month, mood, tags, and search terms.
+
+**Machine learning integration** classifies journal text into five emotion categories (angry, anxious, happy, neutral, sad) and derives sentiment for dashboard display. Inference is performed through a **Hugging Face Space** API; if the service is unavailable, the system uses a **keyword-based fallback** so the application remains usable. **Analytics features** include a dashboard with Chart.js visualizations, an insights page with template-based summaries (such as stress and happiness triggers), and streak or reminder logic tied to journaling habits.
+
+**Database integration** uses **PostgreSQL** in production deployments (Railway and AWS EC2) and **SQLite** for local development, with multiple related tables for users, entries, tags, registrations, push subscriptions, and system settings. **Deployment** is demonstrated on **Railway** as a Platform-as-a-Service host and on **Amazon EC2** using Ubuntu, Gunicorn, nginx, and a local PostgreSQL instance, showing that the same codebase can run in both managed and self-managed cloud environments.
+
+Security and privacy are part of the scope: password hashing, session management, CSRF protection on sensitive requests, rate limiting, input validation, privacy consent at registration, and configurable email delivery through Brevo. **Web Push** notifications and **offline draft** support through a service worker and IndexedDB are included where the browser and deployment environment allow.
 
 ### Limitations
 
-1. **Not a medical or mental-health diagnostic tool** — mood labels are automated estimates for reflection only.
-2. **Mood model dependency** — production inference relies on Hugging Face Space availability; cold starts may delay first prediction (fallback keywords used when needed).
-3. **Email OTP** — requires valid Brevo API configuration; without it, OTP may appear only in server logs (development mode).
-4. **Push notifications** — subject to browser/OS policies; most reliable in installed PWA over HTTPS.
-5. **HTTPS on EC2 demo** — HTTP-by-IP deployment may limit secure cookies and some PWA features unless a domain and TLS are configured.
-6. **Single-tenant journaling** — no social sharing or multi-user collaboration on entries.
-7. **Dataset** — training data is project-specific; model performance may vary on informal or mixed-language text.
+DiariCore is designed for **personal reflection and self-awareness**, not for clinical diagnosis or treatment. Mood and sentiment labels are **automated estimates** based on text analysis; they should not be interpreted as professional mental-health assessments or medical advice.
+
+The emotion model depends on a **hosted Hugging Face Space**. If the Space is sleeping, overloaded, or unreachable, the first prediction after a period of inactivity may take longer (cold start), and the system may temporarily rely on **simplified keyword fallback** classification, which is less accurate than the trained model. Model quality also depends on the **training dataset** used during development; performance may vary on informal language, very short entries, or mixed Tagalog and English text not well represented in training data.
+
+**Email-based OTP verification** requires a properly configured Brevo API key and verified sender address. On fresh deployments without email setup, verification codes may only appear in server logs during development, which is not suitable for end users. **Push notifications** depend on browser and operating system policies and work most reliably when the app is installed as a PWA over **HTTPS**; deployments that use only HTTP on a raw IP address (such as a basic EC2 demo) may limit secure cookies, install prompts, and some notification behavior.
+
+The system supports **single-user private journals** only. There is no social feed, shared entries, or collaborative editing between accounts. **Voice-to-text** and other optional Hugging Face features require separate API tokens and may incur usage limits on free tiers. **Administrative settings** stored in the database still require initial configuration through environment variables on new servers before the first admin can sign in and complete email verification.
+
+Finally, the project documentation and demonstration emphasize **functional deployment and integration** rather than large-scale performance testing, formal usability studies, or compliance certification under RA 10173 beyond implemented consent and security practices appropriate for an academic capstone.
 
 ---
 
