@@ -477,131 +477,231 @@ Additional recommendations include implementing automated tests for authenticati
 
 ### Figure 1. Login Page
 
-**[Insert screenshot here]**
+**[Insert Image 1 here]**
 
-Figure 1 shows the Login Page of DiariCore, where registered users can access their accounts by entering their email address or username and password. The page also provides options for signing up for a new account and recovering access through the forgot password feature. The interface is designed for mobile-friendly access and supports secure entry into the journaling system.
+Figure 1 shows the Login Page of DiariCore, where registered users can access their accounts by entering their email address or username and password. The page displays the DiariCore branding with the tagline “Your mindful journal” and provides navigation options for users who do not yet have an account. A link to the sign-up page and forgot-password option are also available on the interface.
 
-This page serves as the system’s main authentication interface, ensuring that only verified users can enter DiariCore and access their private journal entries, dashboard, insights, profile settings, and other protected features. When the configured administrator email is used, the system redirects the user to the admin page after successful login.
-
----
-
-### Figure 2. Brevo Email API Integration for Registration OTP
-
-**[Insert screenshot here]**
-
-Figure 2 shows the Brevo Email API integration used in DiariCore for the account verification process. The first image may present the Verify Registration page, where the user is asked to enter the one-time password sent to the registered email address. The second image may show the actual email received by the user containing the generated OTP code for completing registration.
-
-This integration helps support secure account creation by ensuring that only users with access to the registered email can activate their accounts. It also demonstrates how DiariCore uses an external email service to send system-generated verification messages as part of its authentication and security features.
+This page serves as the system’s main authentication interface, ensuring that only verified users can enter DiariCore and access their private journal entries, dashboard, insights, suggestions, profile settings, and other protected features. When login is successful, the system establishes a secure session and redirects the user to the dashboard. If the configured administrator email is used, the user may be redirected to the admin page instead.
 
 ---
 
-### Figure 3. Dashboard Overview
+### Figure 2. Sign-Up Page
 
-**[Insert screenshot here]**
+**[Insert Image 2 here]**
 
-Figure 3 shows the Dashboard of DiariCore, which provides users with a clear view of their journaling activity and mood-related summaries. It may include mood distribution charts, streak information, recent activity indicators, and navigation to other modules such as Entries, Write Entry, and Insights.
+Figure 2 shows the Registration Page of DiariCore, where new users can create an account by entering their personal information. The form collects details such as first name, last name, username, email address, gender, birthday, and password. Password strength requirements are displayed to guide the user in creating a secure credential.
 
-This dashboard helps encourage consistent journaling while giving users a quick overview of their emotional patterns and engagement with the system.
-
----
-
-### Figure 4. Dashboard Mood Visualization and Activity Summary
-
-**[Insert screenshot here]**
-
-Figure 4 shows the mood visualization and activity summary section of the DiariCore Dashboard. It presents chart-based summaries of the user’s stored emotion labels and related journaling statistics. This may include mood counts, recent trends, and visual indicators that help users understand how their recent entries are distributed across emotional categories.
-
-The dashboard supports better self-monitoring by allowing users to review their emotional patterns visually instead of reading entries one by one.
+This page serves as the entry point for new users who want to begin using the journaling system. After the user completes the form and agrees to the privacy notice, the system stores the registration request temporarily and proceeds to email verification before the account is fully activated in the database.
 
 ---
 
-### Figure 5. CRUD Module for Creating Journal Entries
+### Figure 3. Privacy Consent
 
-**[Insert screenshot here]**
+**[Insert Image 3 here]**
 
-Figure 5 shows the Write Entry module of DiariCore, where users can create new journal records. The interface allows users to enter a title, body text, date and time, tags, and optional image attachments. The system may also display mood analysis results before or after saving the entry.
+Figure 3 shows the Privacy Consent modal displayed during the registration process of DiariCore. The modal presents the system’s privacy notice and requires the user to read and agree to the terms before continuing with account creation. This step is connected to the project’s effort to handle personal and emotional journal data responsibly.
 
-This module demonstrates the Create function of the system’s CRUD operations. By allowing users to save journal entries, DiariCore collects the text and metadata needed for analytics, emotion classification, insights generation, and database storage.
-
----
-
-### Figure 6. CRUD Module for Reading and Managing Journal Entries
-
-**[Insert screenshot here]**
-
-Figure 6 shows the Entries page of DiariCore, where users can read, search, filter, and open existing journal records. Users may filter by month, mood, tags, or search terms to locate specific entries more easily.
-
-This module demonstrates the Read function of the system’s CRUD operations and supports organized management of the user’s journaling history.
+The purpose of this feature is to inform users how their information will be collected, stored, and used before they complete registration. The consent timestamp is recorded and stored in the database as part of the account lifecycle, supporting privacy-aware onboarding aligned with the Data Privacy Act of 2012 (RA 10173).
 
 ---
 
-### Figure 7. CRUD Module for Updating and Viewing Entry Details
+### Figure 4. OTP Verification Page
 
-**[Insert screenshot here]**
+**[Insert Image 4 here]**
 
-Figure 7 shows the Entry View or Edit page of DiariCore, where users can open a selected entry, review its full content, and update or delete it if needed. The page may display the stored emotion label, sentiment label, tags, images, and entry date.
+Figure 4 shows the Account Verification page of DiariCore, where the user is asked to enter the six-digit one-time password sent to the email address used during registration. The page displays a masked version of the target email and includes options to resend the code or return to the registration page if needed.
 
-This module demonstrates the Update and Delete functions of the system’s CRUD operations and shows how analyzed mood results remain linked to each stored entry.
-
----
-
-### Figure 8. Database Records
-
-**[Insert screenshot here]**
-
-Figure 8 shows database records stored in PostgreSQL for DiariCore. This may include query results from the `users` and `journal_entries` tables displayed in Railway, pgAdmin, or the EC2 terminal using `psql`.
-
-This screenshot demonstrates that the system stores user and journal data persistently in a relational database and that CRUD operations performed in the interface are reflected in the database records.
+This page serves as the final step of account activation. The system compares the entered OTP with the value stored in the `pending_registrations` table and creates the full user record in the `users` table only when the code is valid and not expired.
 
 ---
 
-### Figure 9. Prediction Module with Mood Analysis Output
+### Figure 5. OTP Email Sent Through Brevo
 
-**[Insert screenshot here]**
+**[Insert Image 5 here]**
 
-Figure 9 shows the Prediction Module of DiariCore during journal writing or entry analysis. It presents the emotion label, sentiment label, confidence-related information, and possibly the preview analysis results generated from the user’s text.
+Figure 5 shows the verification email received by the user after registering in DiariCore. The email is sent through the Brevo transactional email API and contains the six-digit verification code needed to complete account activation. The message identifies DiariCore as the sender and explains that the code is time-limited.
 
-This feature demonstrates how the system uses machine learning to classify journal content and display the predicted emotional tone to the user before or after saving an entry.
-
----
-
-### Figure 10. Insights and Analytics Module
-
-**[Insert screenshot here]**
-
-Figure 10 shows the Insights page or analytics section of DiariCore. It presents reflection summaries such as stress triggers, happiness triggers, and keyword-related insights derived from the user’s stored entries.
-
-This module helps users understand possible patterns in their writing and supports the analytical and reflection goals of the system.
+This screenshot demonstrates the system’s external API integration for email-based verification. It also shows that registration security does not depend only on frontend validation, but on a server-generated OTP delivered to the user’s registered email address.
 
 ---
 
-### Figure 11. API or Library Integration
+### Figure 6. Dashboard
 
-**[Insert screenshot here]**
+**[Insert Image 6 here]**
 
-Figure 11 shows an API or library integration used by DiariCore. This may include a browser Network tab displaying a request to the Hugging Face Space prediction endpoint, a Brevo email verification message, or a push notification permission and test notification.
+Figure 6 shows the Dashboard of DiariCore, which provides users with an overview of their journaling activity and emotional summaries. The page includes navigation to other modules such as Write Entry, Entries, Insights, Suggestions, and Profile. The dashboard may display mood-related summaries, streak information, and recent activity indicators based on stored journal entries.
 
-This screenshot demonstrates that the system depends on external services and libraries for machine learning inference, email communication, and notification delivery.
-
----
-
-### Figure 12. Data Visualization Output
-
-**[Insert screenshot here]**
-
-Figure 12 shows the data visualization output of DiariCore using Chart.js. This may include a pie chart, bar chart, or line chart displayed on the dashboard or insights page to represent mood distribution or related statistics.
-
-This feature supports the project requirement for graphical presentation of analyzed data and helps users interpret their journaling history more easily.
+This page serves as the user’s home screen after login. It helps users quickly understand their current journaling progress and emotional patterns without opening each entry individually, supporting the project’s goal of data-driven self-reflection.
 
 ---
 
-### Figure 13. Deployed System on Railway and AWS EC2
+### Figure 7. Write Entry Page
 
-**[Insert screenshot here]**
+**[Insert Image 7 here]**
 
-Figure 13 shows the deployed DiariCore system accessible online. This may include the AWS EC2 Instances page showing a running instance, security group rules, the Railway deployment dashboard, and the application login page opened through a public URL.
+Figure 7 shows the Write Entry page of DiariCore, where users can compose a new journal entry. The interface includes fields for entry date and time, title, body text, tags, and optional photo upload. The page also provides access to voice input and mood analysis actions that prepare the entry for machine learning processing.
 
-This screenshot demonstrates that the project meets the deployment requirement of the course by making the system accessible online with a functioning interface and connected backend services.
+This module demonstrates the Create function of the system’s CRUD operations. By allowing users to write and save entries in a structured format, DiariCore collects the text and metadata needed for emotion classification, analytics, insights generation, and database storage.
+
+---
+
+### Figure 8. Custom Tag Creation
+
+**[Insert Image 8 here]**
+
+Figure 8 shows the Create Custom Tag modal in DiariCore. The user can enter a tag name and select an icon from a searchable icon library before saving the tag. This feature allows users to personalize how they categorize journal entries beyond the default tag options.
+
+The purpose of this feature is to improve organization and filterability of entries. Created tags are stored in the `user_tags` table and become available for selection when writing or editing journal entries.
+
+---
+
+### Figure 9. Write Entry with Tags and Inputted Content
+
+**[Insert Image 9 here]**
+
+Figure 9 shows the Write Entry page after the user has entered journal content and selected tags. The interface displays the chosen tag buttons, the entry title, the full body text, and the optional image upload area. A success notification may appear when a new tag is added successfully.
+
+This screenshot demonstrates how user input is prepared before analysis and saving. It shows that DiariCore supports both free-form writing and structured categorization, which later helps the insights and analytics modules identify patterns in the user’s journaling behavior.
+
+---
+
+### Figure 10. Analyzing Entry Loading Screen
+
+**[Insert Image 10 here]**
+
+Figure 10 shows the analyzing entry loading screen of DiariCore. After the user submits an entry for processing, a modal appears with the message “Analyzing your entry...” and a progress indicator. The screen informs the user that the system is detecting emotion patterns and insights from the submitted text.
+
+This feature provides visual feedback while the backend communicates with the Hugging Face Space inference service. It prevents the user from thinking the application has stopped responding during model processing, especially when the hosted model requires additional loading or cold-start time.
+
+---
+
+### Figure 11. Analysis Result
+
+**[Insert Image 11 here]**
+
+Figure 11 shows the Analysis Complete modal of DiariCore, which presents the machine learning results for the submitted journal entry. The interface displays the primary detected emotion, confidence percentage, emotional signal breakdown, and summary labels such as valence and energy. The user can review the result before clicking “Save & Exit.”
+
+This module demonstrates the prediction output of the system. The results are generated by the fine-tuned emotion model served through the Hugging Face Space and are later stored in the `journal_entries` table as `emotion_label`, `sentiment_label`, scores, and probability data.
+
+---
+
+### Figure 12. Entries Filter
+
+**[Insert Image 12 here]**
+
+Figure 12 shows the Entries page of DiariCore after filters or search terms have been applied. The page includes a search bar, a filter button, and a month selector for browsing entries by date. In this example, the system indicates that no entries match the current search or filter conditions and displays an empty-state message to guide the user.
+
+This feature demonstrates the Read and filtering capability of the journal module. It allows users to locate specific entries more efficiently using keywords, tags, moods, or date-based conditions stored in the database.
+
+---
+
+### Figure 13. Entries Page
+
+**[Insert Image 13 here]**
+
+Figure 13 shows the Entries page of DiariCore displaying saved journal records. Each entry is presented as a card showing the date, title, preview text, and detected mood label such as “Sad.” Entries are grouped by month to make the user’s journaling history easier to browse.
+
+This page demonstrates the Read function of the system’s CRUD operations. It allows users to reflect on previous entries and open a selected record in view or edit mode.
+
+---
+
+### Figure 14. View Mode of Entry
+
+**[Insert Image 14 here]**
+
+Figure 14 shows the View Mode of a selected journal entry in DiariCore. The page displays the entry title, full content, date and time, tags, and the model analysis result such as “Model Analysis: Sad.” Action buttons for edit and delete are also available at the top of the page.
+
+This module allows users to review a complete saved entry together with its stored mood classification. It demonstrates that the system not only saves text content, but also preserves machine learning results for later reflection and analytics.
+
+---
+
+### Figure 15. Edit Mode of Entry
+
+**[Insert Image 15 here]**
+
+Figure 15 shows the Edit Mode of a journal entry in DiariCore. The user can modify the title, text content, tags, and attached images before saving the updated record. A “Save & Analyze” button is available when the user wants the system to process the revised entry again.
+
+This module demonstrates the Update function of the system’s CRUD operations. It allows users to correct or expand previous reflections while keeping the entry linked to the same database record.
+
+---
+
+### Figure 16. Edit Mode Loading for Title, Tags, or Images
+
+**[Insert Image 16 here]**
+
+Figure 16 shows the updating entry loading screen of DiariCore. This modal appears when the user saves changes that affect the title, tags, or images without requiring full text re-analysis. The screen displays a progress bar and the message “Updating your entry...” to indicate that the system is processing the update.
+
+The purpose of this feature is to provide clear feedback during entry updates and to distinguish between content changes that require new mood analysis and metadata changes that only need to be saved to the database.
+
+---
+
+### Figure 17. Insights Page (Emotions)
+
+**[Insert Image 17 here]**
+
+Figure 17 shows the Insights page of DiariCore with the Emotions view selected. The page includes a weekly emotional trend chart, a weekly snapshot summary, an emotion breakdown pie chart, and an emotion-by-tag chart. These visualizations are generated from the user’s stored journal entries and their machine learning mood labels.
+
+This module supports the project’s data visualization requirement and helps users understand how their emotional tone changes over time. It also shows how tagged entries may be associated with specific emotional patterns.
+
+---
+
+### Figure 18. Insights Page (Consistency)
+
+**[Insert Image 18 here]**
+
+Figure 18 shows the Insights page of DiariCore with the Consistency view selected. The page displays usage metrics such as total active days, consistency rate, entries per week, and most active time. A bar chart also shows journaling activity across weeks within the selected month.
+
+The purpose of this feature is to help users track journaling habits and identify how regularly they use the system. It supports habit-building and self-monitoring by turning entry history into consistency-related analytics.
+
+---
+
+### Figure 19. Smart Suggestions Page
+
+**[Insert Image 19 here]**
+
+Figure 19 shows the Smart Suggestions page of DiariCore. The page presents a supportive emotional message and activity recommendations such as nature walk, creative time, and tea meditation based on the user’s recent mood and energy patterns. These suggestions are intended to help users take simple wellbeing actions after journaling.
+
+This module demonstrates how the system uses analyzed entry data to provide personalized reflection support. It extends the machine learning results beyond labels and charts into actionable recommendations for the user.
+
+---
+
+### Figure 20. Profile Page
+
+**[Insert Image 20 here]**
+
+Figure 20 shows the Profile page of DiariCore. The page displays the user’s account summary, profile avatar, membership information, and statistics such as total entries, streak, and weekly entries. It also provides access to account settings including personal information, preferences, privacy, and security.
+
+This page serves as the user account management hub. It allows users to review their journaling progress and navigate to settings that control identity, appearance, notifications, and account protection.
+
+---
+
+### Figure 21. Personal Information Section of Profile Page
+
+**[Insert Image 21 here]**
+
+Figure 21 shows the Personal Information section of the DiariCore Profile page. The user can view and edit fields such as first name, last name, username, email address, gender, and birthday. A profile photo or avatar can also be updated from this screen.
+
+The purpose of this feature is to allow users to maintain accurate account details. When changes are saved, the updated information is stored in the `users` table and reflected throughout the application.
+
+---
+
+### Figure 22. Preferences Section of Profile Page
+
+**[Insert Image 22 here]**
+
+Figure 22 shows the Preferences section of the DiariCore Profile page. The user can configure appearance options such as dark mode and accent color, as well as notification settings including daily reminders and reminder time. A note also explains that push reminders are most reliable in the installed Progressive Web Application.
+
+This feature allows users to personalize the interface and control reminder behavior. Selected preferences are stored in the user profile and used by the client interface and notification scheduler.
+
+---
+
+### Figure 23. Security Settings Section of Profile Page
+
+**[Insert Image 23 here]**
+
+Figure 23 shows the Security Settings section of the DiariCore Profile page. The user can change their password and enable or disable two-factor authentication using an authenticator app. The page also indicates whether two-factor sign-in is currently active or inactive.
+
+This module supports account protection through secure password updates and optional TOTP-based two-factor authentication. It demonstrates that the project includes security controls beyond basic login and registration, which is important for an application that stores private journal content.
 
 ---
 
