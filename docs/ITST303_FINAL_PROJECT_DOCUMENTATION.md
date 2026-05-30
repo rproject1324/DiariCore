@@ -272,7 +272,11 @@ The prediction output is used in several parts of the system. During writing, th
 
 ### 7.5 Training and Deployment Workflow
 
-The model training process is performed offline using the project dataset and training notebook. After fine-tuning, model artifacts are exported and uploaded to Hugging Face Hub. The inference Space in `hf_space/` downloads the ONNX model and tokenizer as needed and serves predictions to the production web application. This separation keeps the main web deployment lightweight while still meeting the course requirement for machine learning integration.
+The model training process is performed offline in **Google Colab**, where the group fine-tunes the emotion classifier using the project dataset (`FinalProject_Resources/1500_dataset_expanded.xlsx`) and the training notebook (`FinalProject_Resources/DiariCore_Model_Final_Cleaned.ipynb`). Google Colab was used because it provides GPU access and a ready Python environment for loading the base XLM-RoBERTa model, running training loops, and evaluating results without requiring a high-specification local machine.
+
+After fine-tuning in Colab, the trained weights are exported to formats suitable for deployment, including PyTorch checkpoint files and ONNX exports. These artifacts are then uploaded to **Hugging Face Hub** under the project model repository (`sseia/diari-core-mood`) so they can be versioned and retrieved by the inference service. The inference Space in `hf_space/` downloads the ONNX model and tokenizer from the Hub as needed and serves predictions through its `/predict` endpoint.
+
+The production DiariCore web application on Railway and AWS EC2 does not load the full training model locally. Instead, it calls the hosted Hugging Face Space through `space_nlp.py`. This separation keeps the main web deployment lightweight in terms of memory and storage while still meeting the course requirement for machine learning integration, since training, export, hosting, and real-time inference are all demonstrated as connected stages of the same workflow.
 
 ---
 
