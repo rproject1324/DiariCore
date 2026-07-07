@@ -432,7 +432,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 await syncInsightsEntriesFromApi();
                 refreshInsightsFromSyncedStorage();
                 await loadEmotionTriggersDashboard();
-            } catch (error) {
+    } catch (error) {
                 console.warn('Insights background sync failed:', error);
             }
         })();
