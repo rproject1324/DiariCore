@@ -8,7 +8,7 @@ except ImportError:
     print("Run: pip install huggingface_hub")
     sys.exit(1)
 
-SPACE_REPO = "sseia/diaricore-inference"
+SPACE_REPO = os.environ.get("HF_SPACE_REPO") or "sseia/diaricore-inference"
 SPACE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hf_space")
 
 FILES_TO_UPLOAD = [
